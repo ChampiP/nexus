@@ -12,4 +12,4 @@ Decisions
 ## Tasks
 - [x] 1. Store + CLI: start/stop/ls/status --json/report (tests first) (commit 1e2588f)
 - [x] 2. TUI: live running timers, start form, stop, today/week dashboard by project (commit aee1851)
-- [ ] 3. Bar widget plugin (manifest + BarWidget.qml) + `make install`
+- [x] 3. Bar widget plugin (manifest + BarWidget.qml) + `make install` (commit d40a7da)
