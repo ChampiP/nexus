@@ -366,6 +366,7 @@ A `SECURITY.md` with a private disclosure channel is required before the first p
 
 - Q2. Idle signal source for movement reminders.
 - Q3. Whether OpenAI Secure MCP Tunnel can serve ChatGPT web for the user's plan.
+- Q6. Name for the prebuilt-binary package (`nexus-bin` is taken); choose an available one before the first public release.
 - Q5. Retention period for soft-deleted entries (proposal: 30 days).
 
 ## 18. Sources

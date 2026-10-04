@@ -373,6 +373,7 @@ Antes de la primera versión pública hace falta un `SECURITY.md` con un canal p
 
 - P2. Fuente de la señal de inactividad para los avisos de movimiento.
 - P3. Si OpenAI Secure MCP Tunnel puede servir a ChatGPT web con el plan del usuario.
+- P6. Nombre del paquete con binario precompilado (`nexus-bin` está ocupado); elegir uno disponible antes de la primera versión pública.
 - P5. Período de retención de las entradas en la papelera (propuesta: 30 días).
 
 ## 18. Fuentes
