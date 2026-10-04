@@ -80,7 +80,7 @@ func TestJSONContracts(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &status); err != nil {
 		t.Fatal(err)
 	}
-	if len(status) != 3 || status["count"] != float64(1) {
+	if len(status) != 4 || status["count"] != float64(1) {
 		t.Fatalf("status JSON = %#v", status)
 	}
 	out, err = invoke(t, tracker, "ls", "--json")
@@ -114,7 +114,7 @@ func TestStartJSONErrorAndStatusWithoutDatabase(t *testing.T) {
 		t.Fatalf("start error = %q, %v", out, err)
 	}
 	out, err = invoke(t, nil, "status", "--json")
-	if err != nil || out != "{\"running\":[],\"count\":0,\"today_seconds\":0}\n" {
+	if err != nil || out != "{\"running\":[],\"count\":0,\"today_seconds\":0,\"break\":null}\n" {
 		t.Fatalf("missing DB status = %q, %v", out, err)
 	}
 }

@@ -27,7 +27,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	tracker, catalogService, _, closeDB, err := openApp(path)
+	tracker, catalogService, breaks, closeDB, err := openApp(path)
 	if err != nil {
 		if len(args) > 0 && args[0] == "status" && hasJSONFlag(args[1:]) {
 			return cli.Run(args, nil, os.Stdout, os.Stderr)
@@ -38,7 +38,7 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return tui.Run(tracker, catalogService)
 	}
-	return cli.RunWithCatalog(args, tracker, catalogService, os.Stdout, os.Stderr)
+	return cli.RunWithOptions(args, tracker, cli.Options{Catalog: catalogService, Breaks: breaks}, os.Stdout, os.Stderr)
 }
 
 // openApp abre y migra la base de datos en path y construye los casos de uso de seguimiento, catálogo y break.

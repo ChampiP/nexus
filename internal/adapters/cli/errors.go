@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"nexus/internal/catalog"
+	"nexus/internal/countdown"
 	"nexus/internal/tracking"
 )
 
@@ -16,6 +17,12 @@ func localize(err error) error {
 		return errors.New("el temporizador no está en curso")
 	case errors.Is(err, tracking.ErrNotFound):
 		return errors.New("la tarea no existe")
+	case errors.Is(err, countdown.ErrBreakActive):
+		return errors.New("Ya hay un break en curso")
+	case errors.Is(err, countdown.ErrNoActiveBreak):
+		return errors.New("No hay un break activo")
+	case errors.Is(err, countdown.ErrInvalidDuration):
+		return errors.New("La duración debe estar entre 1 minuto y 8 horas")
 	case errors.Is(err, catalog.ErrEmptyName):
 		return errors.New("el nombre no puede estar vacío")
 	case errors.Is(err, catalog.ErrMergeSelf):

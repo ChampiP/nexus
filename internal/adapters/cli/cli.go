@@ -54,10 +54,27 @@ func Run(args []string, tracker Tracker, stdout, stderr io.Writer) error {
 // RunWithCatalog ejecuta un comando de Nexus con acceso al catálogo; un catálogo nulo hace que
 // los comandos de catálogo fallen con un mensaje claro en lugar de entrar en pánico.
 func RunWithCatalog(args []string, tracker Tracker, catalog Catalog, stdout, stderr io.Writer) error {
-	return localize(run(args, tracker, catalog, stdout, stderr))
+	return RunWithOptions(args, tracker, Options{Catalog: catalog}, stdout, stderr)
 }
 
-func run(args []string, tracker Tracker, catalog Catalog, stdout, stderr io.Writer) error {
+// Options agrupa las dependencias opcionales de la línea de comandos.
+type Options struct {
+	Catalog Catalog
+	Breaks  Breaks
+	// Now es el reloj de la CLI; nulo usa time.Now.
+	Now func() time.Time
+}
+
+// RunWithOptions ejecuta un comando con catálogo y breaks opcionales.
+func RunWithOptions(args []string, tracker Tracker, opts Options, stdout, stderr io.Writer) error {
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
+	return localize(run(args, tracker, opts, stdout, stderr))
+}
+
+func run(args []string, tracker Tracker, opts Options, stdout, stderr io.Writer) error {
+	catalog := opts.Catalog
 	if len(args) == 0 {
 		fmt.Fprint(stderr, usageText)
 		return fmt.Errorf("falta el comando")
@@ -68,7 +85,9 @@ func run(args []string, tracker Tracker, catalog Catalog, stdout, stderr io.Writ
 		_, err := fmt.Fprint(stdout, usageText)
 		return err
 	case "status":
-		return runStatus(args, tracker, stdout)
+		return runStatus(args, tracker, opts, stdout)
+	case "break":
+		return runBreak(args, tracker, opts, stdout)
 	case "org", "client", "project", "tree":
 		if catalog == nil {
 			return fmt.Errorf("el catálogo no está disponible")
@@ -114,6 +133,12 @@ Temporizadores:
   nexus status [--json]                                          muestra lo que está en curso
   nexus ls [--json]                                              lista en curso y recientes
   nexus report [--week]                                          tiempo por proyecto
+
+Break:
+  nexus break [minutos] [-m etiqueta] [--stop all|none|3,5] [--json]   inicia un break (60 min por defecto)
+  nexus break status [--json]                                    muestra el tiempo restante
+  nexus break extend [minutos]                                   extiende el break (10 min por defecto)
+  nexus break end [--resume|--no-resume] [--json]                termina el break y retoma los temporizadores
 
 Tareas:
   nexus edit <id> [-t título] [-p proyecto] [-d descripción] [--json]

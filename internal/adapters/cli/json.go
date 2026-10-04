@@ -20,6 +20,8 @@ type statusOutput struct {
 	Running      []statusEntry `json:"running"`
 	Count        int           `json:"count"`
 	TodaySeconds int64         `json:"today_seconds"`
+	// Break es aditivo: null cuando no hay break activo.
+	Break *breakOutput `json:"break"`
 }
 type createdEntry struct {
 	ID          int64  `json:"id"`

@@ -11,6 +11,7 @@ import (
 
 	"nexus/internal/adapters/projectlist"
 	"nexus/internal/catalog"
+	"nexus/internal/countdown"
 	"nexus/internal/tracking"
 )
 
@@ -116,27 +117,40 @@ func runStop(args []string, tracker Tracker, stdout io.Writer) error {
 	return err
 }
 
-func runStatus(args []string, tracker Tracker, stdout io.Writer) error {
+func runStatus(args []string, tracker Tracker, opts Options, stdout io.Writer) error {
 	jsonMode := contains(args, "--json")
 	if hasUnknownStatusArgument(args) && !jsonMode {
 		return fmt.Errorf("uso: nexus status [--json]")
 	}
 	output := statusOutput{Running: []statusEntry{}}
+	now := opts.Now()
+	var active *countdown.Break
+	if opts.Breaks != nil {
+		// status nunca falla: un error al leer el break se trata como "sin break".
+		if b, err := opts.Breaks.Active(); err == nil {
+			active = b
+		}
+	}
+	output.Break = presentBreak(active, now)
 	if tracker != nil {
 		running, today, _, err := tracker.Snapshot()
 		if err == nil {
 			output.TodaySeconds = today
 			output.Count = len(running)
 			for _, entry := range running {
-				output.Running = append(output.Running, presentStatus(entry, time.Now()))
+				output.Running = append(output.Running, presentStatus(entry, now))
 			}
 		}
 	}
 	if jsonMode {
 		return json.NewEncoder(stdout).Encode(output)
 	}
+	breakLine := ""
+	if active != nil {
+		breakLine = breakStatusText(*active, now) + "\n"
+	}
 	if output.Count == 0 {
-		_, err := fmt.Fprintf(stdout, "En curso: sin temporizadores\nHoy: %s\n", humanDuration(output.TodaySeconds))
+		_, err := fmt.Fprintf(stdout, "En curso: sin temporizadores\nHoy: %s\n%s", humanDuration(output.TodaySeconds), breakLine)
 		return err
 	}
 	if _, err := fmt.Fprintf(stdout, "En curso: %d\nHoy: %s\n", output.Count, humanDuration(output.TodaySeconds)); err != nil {
@@ -147,7 +161,8 @@ func runStatus(args []string, tracker Tracker, stdout io.Writer) error {
 			return err
 		}
 	}
-	return nil
+	_, err := io.WriteString(stdout, breakLine)
+	return err
 }
 
 func runList(args []string, tracker Tracker, stdout io.Writer) error {
@@ -169,7 +184,7 @@ func runList(args []string, tracker Tracker, stdout io.Writer) error {
 		if entry.EndedAt != nil {
 			seconds = *entry.EndedAt - entry.StartedAt
 		}
-		output.Recent = append(output.Recent, recentEntry{entry.ID, entry.Title, entry.Project, entry.StartedAt, entry.EndedAt, seconds, entry.UID, entry.Description})
+		output.Recent = append(output.Recent, recentEntry{entry.ID, entry.Title, recentProject(entry), entry.StartedAt, entry.EndedAt, seconds, entry.UID, entry.Description})
 	}
 	if jsonMode {
 		return json.NewEncoder(stdout).Encode(output)

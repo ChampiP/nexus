@@ -13,7 +13,7 @@ Keep it lean: one active break at a time, no movement reminders yet.
 
 ## Tasks
 - [x] 1. Domain: tracking kind=break (excluded from work totals/running list) + countdown module (migration, use cases, ports) + tests (commit 902289e)
-- [ ] 2. CLI: break start/status/extend/end, additive `break` field in status --json
+- [x] 2. CLI: break start/status/extend/end, additive `break` field in status --json (commit 6ac77e9)
 - [ ] 3. Daemon: `nexus daemon` (deadline loop, notify-send actions), systemd user unit, make install
 - [ ] 4. TUI: break button, duration + timers-to-stop panel, break banner with actions
 - [ ] 5. Bar: label and popup show break remaining/overdue with actions (needs shell restart)
