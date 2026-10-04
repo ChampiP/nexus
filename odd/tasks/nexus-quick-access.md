@@ -14,6 +14,6 @@ Non-goals: logging, pause/resume, sync.
 - cmd/nexus/main.go: composition root only
 
 ## Tasks
-- [ ] 1. Layered refactor + `projects` query + CLI in Spanish + --json contract
+- [x] 1. Layered refactor + `projects` query + CLI in Spanish + --json contract (commit b92f0af)
 - [ ] 2. TUI: arrows/Enter/mouse, always-ready title input, searchable project picker, visible description
 - [ ] 3. Bar popup panel: quick start (title + searchable project), running timers with stop buttons, open detail TUI
