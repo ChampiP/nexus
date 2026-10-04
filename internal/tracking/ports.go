@@ -15,3 +15,8 @@ type Repository interface {
 
 // Clock supplies the current time to Tracker.
 type Clock func() time.Time
+
+// ProjectResolver maps a project name to the catalog's project id, creating the project if needed.
+type ProjectResolver interface {
+	EnsureProject(name string) (id int64, err error)
+}

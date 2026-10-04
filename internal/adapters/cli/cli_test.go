@@ -8,21 +8,25 @@ import (
 	"testing"
 	"time"
 
+	"nexus/internal/catalog"
 	platformdb "nexus/internal/platform/db"
 	"nexus/internal/tracking"
 )
 
 func testTracker(t *testing.T) *tracking.Tracker {
 	t.Helper()
-	db, err := platformdb.Open(filepath.Join(t.TempDir(), "nexus.db"))
+	path := filepath.Join(t.TempDir(), "nexus.db")
+	db, err := platformdb.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	repository, err := tracking.NewSQLite(db)
-	if err != nil {
+	migrations := append(tracking.Migrations()[:1:1], catalog.Migrations()...)
+	migrations = append(migrations, tracking.Migrations()[1])
+	if _, _, err := platformdb.Migrate(db, path, migrations, time.Now); err != nil {
 		t.Fatal(err)
 	}
+	repository := tracking.NewSQLite(db)
 	return tracking.NewTracker(repository, func() time.Time { return time.Date(2025, 3, 4, 12, 0, 0, 0, time.Local) })
 }
 

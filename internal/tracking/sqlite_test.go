@@ -1,6 +1,7 @@
 package tracking
 
 import (
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -9,18 +10,74 @@ import (
 	platformdb "nexus/internal/platform/db"
 )
 
-// openSQLite opens a database at path and returns a SQLite repository over it.
+// openSQLite opens and migrates a database at path and returns a SQLite repository over it.
+// The projects table normally belongs to catalog, which tracking must not import, so a stub stands in.
 func openSQLite(path string) (*SQLite, error) {
 	db, err := platformdb.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	s, err := NewSQLite(db)
-	if err != nil {
+	stub := platformdb.Migration{Module: "catalog", Version: 1, Up: func(tx *sql.Tx) error {
+		_, err := tx.Exec(`CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL)`)
+		return err
+	}}
+	migrations := append(Migrations()[:1:1], stub, Migrations()[1])
+	if _, _, err := platformdb.Migrate(db, path, migrations, time.Now); err != nil {
 		db.Close()
 		return nil, err
 	}
-	return s, nil
+	return NewSQLite(db), nil
+}
+
+func TestInsertAssignsUIDAndKindAndReadsSkipDeleted(t *testing.T) {
+	s, err := openSQLite(filepath.Join(t.TempDir(), "nexus.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.db.Close()
+	entry, err := s.Insert(Entry{Title: "a", StartedAt: 1})
+	if err != nil || len(entry.UID) != 26 || entry.Kind != "work" {
+		t.Fatalf("Insert = %+v, %v", entry, err)
+	}
+	if _, err := s.db.Exec(`UPDATE entries SET deleted_at = 5 WHERE id = ?`, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	running, _ := s.Running()
+	recent, _ := s.Recent(10)
+	totals, _ := s.Totals(0, 100)
+	projects, _ := s.Projects(100)
+	if len(running)+len(recent)+len(totals)+len(projects) != 0 {
+		t.Fatalf("deleted entry visible: %v %v %v %v", running, recent, totals, projects)
+	}
+}
+
+type fakeResolver map[string]int64
+
+func (f fakeResolver) EnsureProject(name string) (int64, error) { return f[name], nil }
+
+func TestReconcileFillsUIDAndProjectID(t *testing.T) {
+	s, err := openSQLite(filepath.Join(t.TempDir(), "nexus.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.db.Close()
+	if _, err := s.db.Exec(`INSERT INTO projects(id, name) VALUES (7, 'p')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO entries(title, project, started_at) VALUES ('x', 'p', 1), ('y', '', 2)`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := s.Reconcile(fakeResolver{"p": 7}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var linked, nulls int
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM entries WHERE project_id = 7 AND project = 'p'`).Scan(&linked)
+	_ = s.db.QueryRow(`SELECT COUNT(*) FROM entries WHERE uid IS NULL OR (project = '' AND project_id IS NOT NULL)`).Scan(&nulls)
+	if linked != 1 || nulls != 0 {
+		t.Fatalf("linked = %d, nulls = %d", linked, nulls)
+	}
 }
 
 func TestOpenCreatesParentAndSupportsConcurrentTimers(t *testing.T) {

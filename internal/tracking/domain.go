@@ -3,9 +3,17 @@ package tracking
 
 import "errors"
 
+// KindWork is the default entry kind; KindBreak marks a break.
+const (
+	KindWork  = "work"
+	KindBreak = "break"
+)
+
 // Entry is a tracked interval. A nil EndedAt denotes a running timer.
 type Entry struct {
 	ID          int64
+	UID         string
+	Kind        string
 	Title       string
 	Description string
 	Project     string

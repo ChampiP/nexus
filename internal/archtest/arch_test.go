@@ -14,6 +14,7 @@ import (
 
 const (
 	tracking = "nexus/internal/tracking"
+	catalog  = "nexus/internal/catalog"
 	platform = "nexus/internal/platform"
 	adapters = "nexus/internal/adapters"
 	cliPkg   = "nexus/internal/adapters/cli"
@@ -52,6 +53,10 @@ func TestModuleBoundaries(t *testing.T) {
 		for _, imp := range p.Imports {
 			switch {
 			case within(p.ImportPath, tracking) && within(imp, adapters):
+				t.Errorf("%s must not import adapter %s", p.ImportPath, imp)
+			case within(p.ImportPath, tracking) && within(imp, catalog), within(p.ImportPath, catalog) && within(imp, tracking):
+				t.Errorf("%s must not import %s", p.ImportPath, imp)
+			case within(p.ImportPath, catalog) && within(imp, adapters):
 				t.Errorf("%s must not import adapter %s", p.ImportPath, imp)
 			case within(p.ImportPath, platform) && strings.HasPrefix(imp, "nexus/") && !within(imp, platform):
 				t.Errorf("%s (platform) must not import %s", p.ImportPath, imp)
