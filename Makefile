@@ -1,6 +1,7 @@
+UNIT_DIR := $(HOME)/.config/systemd/user
 PLUGIN_DIR := $(HOME)/.config/omarchy/plugins/champip.nexus
 
-.PHONY: build test install
+.PHONY: build test install uninstall-service
 build:
 	go build -o nexus ./cmd/nexus
 
@@ -12,5 +13,16 @@ test:
 install:
 	go build -o $(HOME)/.local/bin/nexus ./cmd/nexus
 	ln -sfn $(CURDIR)/plugin/champip.nexus $(PLUGIN_DIR)
+	mkdir -p $(UNIT_DIR)
+	cp contrib/systemd/nexus.service $(UNIT_DIR)/nexus.service
+	systemctl --user daemon-reload
+	systemctl --user enable nexus.service
+	systemctl --user restart nexus.service
 	-omarchy-shell shell rescanPlugins
 	@echo "Now run: omarchy plugin enable champip.nexus"
+
+# Detiene y desactiva el servicio de avisos y borra su unidad.
+uninstall-service:
+	-systemctl --user disable --now nexus.service
+	rm -f $(UNIT_DIR)/nexus.service
+	systemctl --user daemon-reload

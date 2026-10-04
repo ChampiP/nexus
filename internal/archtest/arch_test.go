@@ -20,6 +20,8 @@ const (
 	adapters  = "nexus/internal/adapters"
 	cliPkg    = "nexus/internal/adapters/cli"
 	tuiPkg    = "nexus/internal/adapters/tui"
+	daemonPkg = "nexus/internal/adapters/daemon"
+	notifyPkg = "nexus/internal/platform/notify"
 	// projectListPkg es compartido por los adaptadores; solo puede depender de tracking y catalog.
 	projectListPkg = "nexus/internal/adapters/projectlist"
 )
@@ -70,6 +72,12 @@ func TestModuleBoundaries(t *testing.T) {
 			case p.ImportPath == projectListPkg && strings.HasPrefix(imp, "nexus/") && !within(imp, tracking) && !within(imp, catalog):
 				t.Errorf("%s solo puede importar tracking y catalog, no %s", p.ImportPath, imp)
 			case within(imp, projectListPkg) && p.ImportPath != cliPkg && p.ImportPath != tuiPkg && p.ImportPath != projectListPkg && !strings.HasPrefix(p.ImportPath, "nexus/cmd/") && !strings.HasSuffix(p.ImportPath, "projectlist.test"):
+				t.Errorf("%s no debe importar %s", p.ImportPath, imp)
+			case p.ImportPath == daemonPkg && strings.HasPrefix(imp, "nexus/") && !within(imp, countdown) && imp != notifyPkg:
+				t.Errorf("%s solo puede importar countdown y platform/notify, no %s", p.ImportPath, imp)
+			case p.ImportPath == notifyPkg && strings.HasPrefix(imp, "nexus/"):
+				t.Errorf("%s no debe importar paquetes internos, no %s", p.ImportPath, imp)
+			case within(imp, daemonPkg) && !strings.HasPrefix(p.ImportPath, "nexus/cmd/") && p.ImportPath != daemonPkg && !strings.HasSuffix(p.ImportPath, "daemon.test"):
 				t.Errorf("%s no debe importar %s", p.ImportPath, imp)
 			case p.ImportPath == cliPkg && imp == tuiPkg, p.ImportPath == tuiPkg && imp == cliPkg:
 				t.Errorf("%s must not import %s", p.ImportPath, imp)

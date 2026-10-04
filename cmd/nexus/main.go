@@ -1,17 +1,23 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"nexus/internal/adapters/cli"
+	"nexus/internal/adapters/daemon"
 	"nexus/internal/adapters/tui"
 	"nexus/internal/catalog"
 	"nexus/internal/countdown"
 	platformdb "nexus/internal/platform/db"
+	"nexus/internal/platform/notify"
 	"nexus/internal/tracking"
 )
 
@@ -21,6 +27,9 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// daemonTick es cada cuánto el daemon revisa si un break venció.
+const daemonTick = 10 * time.Second
 
 func run(args []string) error {
 	path, err := databasePath()
@@ -35,10 +44,38 @@ func run(args []string) error {
 		return err
 	}
 	defer closeDB()
+	if len(args) == 1 && args[0] == "daemon" {
+		return runDaemon(breaks)
+	}
 	if len(args) == 0 {
 		return tui.Run(tracker, catalogService)
 	}
 	return cli.RunWithOptions(args, tracker, cli.Options{Catalog: catalogService, Breaks: breaks}, os.Stdout, os.Stderr)
+}
+
+// runDaemon corre el bucle de avisos hasta recibir SIGINT o SIGTERM; solo permite una instancia.
+func runDaemon(breaks *countdown.Service) error {
+	release, err := daemon.Lock(daemon.LockPath())
+	if err != nil {
+		return err
+	}
+	defer release()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	daemon.Run(ctx, breaks, notifier{}, openNexus, time.Now, daemonTick)
+	return nil
+}
+
+// openNexus abre (o enfoca) el TUI de Nexus en una terminal, donde el usuario resuelve el break.
+func openNexus() error {
+	return exec.Command("omarchy-launch-or-focus-tui", "nexus").Start()
+}
+
+// notifier adapta notify.Send al puerto del daemon.
+type notifier struct{}
+
+func (notifier) Send(ctx context.Context, n notify.Notification) (string, error) {
+	return notify.Send(ctx, n)
 }
 
 // openApp abre y migra la base de datos en path y construye los casos de uso de seguimiento, catálogo y break.

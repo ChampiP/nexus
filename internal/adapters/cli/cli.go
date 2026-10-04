@@ -140,6 +140,9 @@ Break:
   nexus break extend [minutos]                                   extiende el break (10 min por defecto)
   nexus break end [--resume|--no-resume] [--json]                termina el break y retoma los temporizadores
 
+Servicio:
+  nexus daemon                                                   avisa cuando un break vence (lo inicia systemd)
+
 Tareas:
   nexus edit <id> [-t título] [-p proyecto] [-d descripción] [--json]
   nexus rm <id> [--json]                                         envía la tarea a la papelera
