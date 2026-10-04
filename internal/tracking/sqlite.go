@@ -2,9 +2,12 @@ package tracking
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/oklog/ulid/v2"
+	"modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 
 	platformdb "nexus/internal/platform/db"
 )
@@ -45,7 +48,33 @@ CREATE INDEX entries_project_id_idx ON entries(project_id);`)
 			return err
 		}},
 		{Module: "tracking", Version: 3, Up: migrateTaskUID},
+		{Module: "tracking", Version: 4, Up: migrateIntegrity},
 	}
+}
+
+func migrateIntegrity(tx *sql.Tx) error {
+	// Las tareas con varias sesiones abiertas se normalizan conservando abierta la más reciente.
+	if _, err := tx.Exec(`UPDATE entries SET ended_at = (
+		SELECT newest.started_at FROM entries AS newest
+		WHERE newest.task_uid = entries.task_uid AND newest.ended_at IS NULL AND newest.deleted_at IS NULL
+		ORDER BY newest.started_at DESC, newest.id DESC LIMIT 1)
+		WHERE ended_at IS NULL AND deleted_at IS NULL AND id <> (
+		SELECT newest.id FROM entries AS newest
+		WHERE newest.task_uid = entries.task_uid AND newest.ended_at IS NULL AND newest.deleted_at IS NULL
+		ORDER BY newest.started_at DESC, newest.id DESC LIMIT 1)`); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`
+CREATE INDEX entries_started_at_idx ON entries(started_at);
+CREATE INDEX entries_project_started_idx ON entries(project_id, started_at) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX entries_one_running_per_task_idx ON entries(task_uid) WHERE ended_at IS NULL AND deleted_at IS NULL;
+CREATE TRIGGER entries_ended_after_started_insert BEFORE INSERT ON entries
+WHEN NEW.ended_at IS NOT NULL AND NEW.ended_at < NEW.started_at
+BEGIN SELECT RAISE(ABORT, 'ended_at precedes started_at'); END;
+CREATE TRIGGER entries_ended_after_started_update BEFORE UPDATE OF started_at, ended_at ON entries
+WHEN NEW.ended_at IS NOT NULL AND NEW.ended_at < NEW.started_at
+BEGIN SELECT RAISE(ABORT, 'ended_at precedes started_at'); END;`)
+	return err
 }
 
 // migrateTaskUID agrega task_uid y agrupa las sesiones idénticas existentes en una sola tarea.
@@ -177,6 +206,10 @@ func (s *SQLite) Insert(entry Entry) (Entry, error) {
 	}
 	result, err := s.db.Exec(`INSERT INTO entries(uid, task_uid, kind, title, description, project, project_id, started_at) VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, 0), ?)`, entry.UID, entry.TaskUID, entry.Kind, entry.Title, entry.Description, entry.Project, entry.ProjectID, entry.StartedAt)
 	if err != nil {
+		var sqliteErr *sqlite.Error
+		if errors.As(err, &sqliteErr) && sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
+			return Entry{}, ErrAlreadyRunning
+		}
 		return Entry{}, fmt.Errorf("insert timer: %w", err)
 	}
 	entry.ID, err = result.LastInsertId()

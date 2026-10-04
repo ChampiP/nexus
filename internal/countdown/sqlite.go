@@ -37,7 +37,47 @@ CREATE TABLE countdowns (
 CREATE INDEX countdowns_finished_at_idx ON countdowns(finished_at);`)
 			return err
 		}},
+		{Module: "countdown", Version: 2, Up: migrateIntegrity},
 	}
+}
+
+func migrateIntegrity(tx *sql.Tx) error {
+	// Se termina a todas las cuentas activas salvo la más reciente; también se corrigen intervalos invertidos y tipos desconocidos antes de validar.
+	if _, err := tx.Exec(`UPDATE countdowns SET finished_at = ends_at
+		WHERE finished_at IS NULL AND id NOT IN (SELECT id FROM countdowns
+			WHERE finished_at IS NULL ORDER BY started_at DESC, id DESC LIMIT 1);
+		UPDATE countdowns SET ends_at = started_at WHERE ends_at < started_at;
+		UPDATE countdowns SET kind = 'break' WHERE kind NOT IN ('break','focus','custom');`); err != nil {
+		return err
+	}
+	// La tabla hija puede reemplazarse con claves foráneas activas: DROP de la tabla hija no invalida sus padres;
+	// PRAGMA foreign_keys no es modificable dentro de la transacción que Migrate abre por cada paso.
+	if _, err := tx.Exec(`
+CREATE TABLE countdowns_new (
+    id INTEGER PRIMARY KEY,
+    uid TEXT UNIQUE NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'break' CHECK(kind IN ('break','focus','custom')),
+    label TEXT NOT NULL DEFAULT '',
+    started_at INTEGER NOT NULL,
+    ends_at INTEGER NOT NULL CHECK(ends_at >= started_at),
+    finished_at INTEGER NULL,
+    entry_id INTEGER NULL REFERENCES entries(id) ON DELETE SET NULL,
+    resume_entry_ids TEXT NOT NULL DEFAULT '[]',
+    notified_at INTEGER NULL
+);
+INSERT INTO countdowns_new(id, uid, kind, label, started_at, ends_at, finished_at, entry_id, resume_entry_ids, notified_at)
+-- Se conserva la referencia solo si la entrada todavía existe.
+SELECT id, uid, kind, label, started_at, ends_at, finished_at,
+	CASE WHEN EXISTS (SELECT 1 FROM entries e WHERE e.id = countdowns.entry_id) THEN entry_id END,
+	resume_entry_ids, notified_at FROM countdowns;
+DROP TABLE countdowns;
+ALTER TABLE countdowns_new RENAME TO countdowns;
+CREATE INDEX countdowns_finished_at_idx ON countdowns(finished_at);
+CREATE INDEX countdowns_active_idx ON countdowns(started_at DESC, id DESC) WHERE finished_at IS NULL;
+CREATE UNIQUE INDEX countdowns_one_active_idx ON countdowns((1)) WHERE finished_at IS NULL;`); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Insert guarda un break nuevo y le asigna id y uid.

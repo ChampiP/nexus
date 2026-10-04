@@ -12,4 +12,9 @@ type Repository interface {
 	Save(map[string]string) error
 }
 
+type eventRepository interface {
+	SaveEvent(map[string]string, string, int64) error
+	Counters(int64, int64) (Counters, error)
+}
+
 type Clock func() time.Time

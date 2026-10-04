@@ -22,6 +22,42 @@ func openCatalog(t *testing.T) *SQLite {
 	return NewSQLite(db)
 }
 
+func TestNullOrganizationClientUniquenessAndMergeMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "merge.db")
+	db, err := platformdb.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	steps := Migrations()
+	if _, _, err := platformdb.Migrate(db, path, steps[:1], time.Now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO clients(id,uid,name) VALUES(1,'one','Acme'),(2,'two','acme'),(3,'three',' Widget '),(4,'four','Widget'); INSERT INTO projects(id,uid,name,client_id) VALUES(1,'p1','Project 1',2)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := platformdb.Migrate(db, path, steps, time.Now); err != nil {
+		t.Fatal(err)
+	}
+	var count, clientID int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM clients WHERE organization_id IS NULL`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT client_id FROM projects WHERE id=1`).Scan(&clientID); err != nil {
+		t.Fatal(err)
+	}
+	if count != 3 || clientID != 1 {
+		t.Fatalf("clients=%d project client=%d", count, clientID)
+	}
+	var padded string
+	if err := db.QueryRow(`SELECT name FROM clients WHERE id=3`).Scan(&padded); err != nil || padded != " Widget " {
+		t.Fatalf("collision name = %q, %v", padded, err)
+	}
+	if _, err := db.Exec(`INSERT INTO clients(uid,name) VALUES('duplicate','ACME')`); err == nil {
+		t.Fatal("duplicate NULL-org client accepted")
+	}
+}
+
 func TestEnsureProjectCreatesOnceCaseInsensitively(t *testing.T) {
 	c := openCatalog(t)
 	first, err := c.EnsureProject("Nexus")

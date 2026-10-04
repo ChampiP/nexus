@@ -1,6 +1,7 @@
 package wellbeing
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -15,6 +16,32 @@ func (m *memory) Load() (map[string]string, error) {
 	return x, nil
 }
 func (m *memory) Save(x map[string]string) error { m.values = x; return nil }
+func (m *memory) SaveEvent(x map[string]string, event string, at int64) error {
+	if err := m.Save(x); err != nil {
+		return err
+	}
+	key := fmt.Sprintf("event:%d:%s", at, event)
+	m.values[key] = "1"
+	return nil
+}
+func (m *memory) Counters(start, end int64) (Counters, error) {
+	var result Counters
+	for key := range m.values {
+		var at int64
+		var event string
+		if _, err := fmt.Sscanf(key, "event:%d:%s", &at, &event); err == nil && at >= start && at < end {
+			switch event {
+			case "shown":
+				result.Shown++
+			case "done":
+				result.Done++
+			case "skipped":
+				result.Skipped++
+			}
+		}
+	}
+	return result, nil
+}
 
 type workState struct{ running, breaking bool }
 

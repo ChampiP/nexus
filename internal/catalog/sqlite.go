@@ -46,7 +46,35 @@ CREATE TABLE projects (
     UNIQUE(name COLLATE NOCASE)
 );`)
 		return err
-	}}}
+	}}, {Module: "catalog", Version: 2, Up: migrateClientNames}}
+}
+
+func migrateClientNames(tx *sql.Tx) error {
+	// Los clientes sin organización duplicados se consolidan en la fila de menor id; sus proyectos se conservan y se reasignan.
+	if _, err := tx.Exec(`UPDATE projects SET client_id = (
+		SELECT MIN(keep.id) FROM clients AS keep
+		WHERE keep.organization_id IS NULL AND keep.name = (
+			SELECT dup.name FROM clients AS dup WHERE dup.id = projects.client_id)
+			COLLATE NOCASE)
+		WHERE client_id IN (SELECT id FROM clients WHERE organization_id IS NULL)
+		AND EXISTS (SELECT 1 FROM clients AS dup JOIN clients AS keep
+			ON keep.organization_id IS NULL AND keep.name = dup.name COLLATE NOCASE
+			AND keep.id < dup.id WHERE dup.id = projects.client_id)`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM clients WHERE organization_id IS NULL AND id NOT IN (
+		SELECT MIN(id) FROM clients WHERE organization_id IS NULL GROUP BY name COLLATE NOCASE)`); err != nil {
+		return err
+	}
+	// Se recortan solo nombres cuyo valor normalizado no colisiona dentro de su organización.
+	if _, err := tx.Exec(`UPDATE clients AS c SET name = trim(name)
+		WHERE name <> trim(name)
+		AND NOT EXISTS (SELECT 1 FROM clients AS other WHERE other.organization_id IS c.organization_id
+			AND other.id <> c.id AND other.name = trim(c.name) COLLATE NOCASE)`); err != nil {
+		return err
+	}
+	_, err := tx.Exec(`CREATE UNIQUE INDEX clients_null_org_name_idx ON clients(name COLLATE NOCASE) WHERE organization_id IS NULL`)
+	return err
 }
 
 // EnsureProject returns the project with that name (case-insensitive), creating it if needed.

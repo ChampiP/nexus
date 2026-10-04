@@ -53,12 +53,16 @@ func (failingRepo) Insert(Break) (Break, error) { return Break{}, errors.New("di
 
 func newTestService(t *testing.T, timers Timers, now *int64) *Service {
 	t.Helper()
-	db, err := platformdb.Open(filepath.Join(t.TempDir(), "nexus.db"))
+	path := filepath.Join(t.TempDir(), "nexus.db")
+	db, err := platformdb.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if _, _, err := platformdb.Migrate(db, "", Migrations(), time.Now); err != nil {
+	if _, err := db.Exec(`CREATE TABLE entries (id INTEGER PRIMARY KEY); INSERT INTO entries(id) VALUES (101), (102), (103), (104)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := platformdb.Migrate(db, path, Migrations(), time.Now); err != nil {
 		t.Fatal(err)
 	}
 	return NewService(NewSQLite(db), timers, func() time.Time { return time.Unix(*now, 0) })

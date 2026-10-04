@@ -162,22 +162,28 @@ func (s *Service) MarkShown(now time.Time) error {
 	v := s.values()
 	v["last_shown_at"] = strconv.FormatInt(now.Unix(), 10)
 	v["rotation"] = strconv.Itoa(parseInt(v["rotation"]) + 1)
-	day := now.Format("2006-01-02")
-	v["shown:"+day] = strconv.Itoa(parseInt(v["shown:"+day]) + 1)
-	return s.repo.Save(v)
+	return s.saveEvent(v, "shown", now)
 }
-func (s *Service) Done(now time.Time) error { return s.count(now, "done") }
-func (s *Service) Skip(now time.Time) error { return s.count(now, "skipped") }
-func (s *Service) count(now time.Time, key string) error {
-	v := s.values()
-	day := now.Format("2006-01-02")
-	v[key+":"+day] = strconv.Itoa(parseInt(v[key+":"+day]) + 1)
-	return s.repo.Save(v)
+func (s *Service) Done(now time.Time) error { return s.record(now, "done") }
+func (s *Service) Skip(now time.Time) error { return s.record(now, "skipped") }
+func (s *Service) record(now time.Time, event string) error {
+	return s.saveEvent(s.values(), event, now)
+}
+
+func (s *Service) saveEvent(values map[string]string, event string, now time.Time) error {
+	if repo, ok := s.repo.(eventRepository); ok {
+		return repo.SaveEvent(values, event, now.Unix())
+	}
+	if event == "shown" || event == "done" || event == "skipped" {
+		key := event + ":" + now.Format("2006-01-02")
+		values[key] = strconv.Itoa(parseInt(values[key]) + 1)
+	}
+	return s.repo.Save(values)
 }
 func (s *Service) Snooze(now time.Time, d time.Duration) error {
 	v := s.values()
 	v["snoozed_until"] = strconv.FormatInt(now.Add(d).Unix(), 10)
-	return s.repo.Save(v)
+	return s.saveEvent(v, "snoozed", now)
 }
 func (s *Service) DND(now time.Time, d time.Duration) error {
 	v := s.values()
@@ -200,6 +206,17 @@ func (s *Service) Status(now time.Time) (Status, error) {
 	if start.IsZero() {
 		next = now.Add(cfg.Every)
 	}
-	day := now.Format("2006-01-02")
-	return Status{Settings: cfg, NextDue: next, SnoozedUntil: optionalTime(parseTime(v["snoozed_until"])), DNDUntil: optionalTime(parseTime(v["dnd_until"])), Counters: Counters{parseInt(v["shown:"+day]), parseInt(v["done:"+day]), parseInt(v["skipped:"+day])}}, nil
+	startDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	var counters Counters
+	if repo, ok := s.repo.(eventRepository); ok {
+		var err error
+		counters, err = repo.Counters(startDay.Unix(), startDay.AddDate(0, 0, 1).Unix())
+		if err != nil {
+			return Status{}, err
+		}
+	} else {
+		day := now.Format("2006-01-02")
+		counters = Counters{Shown: parseInt(v["shown:"+day]), Done: parseInt(v["done:"+day]), Skipped: parseInt(v["skipped:"+day])}
+	}
+	return Status{Settings: cfg, NextDue: next, SnoozedUntil: optionalTime(parseTime(v["snoozed_until"])), DNDUntil: optionalTime(parseTime(v["dnd_until"])), Counters: counters}, nil
 }

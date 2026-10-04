@@ -206,15 +206,30 @@ func (c catalogProjects) EnsureProject(name string) (int64, error) {
 	return project.ID, err
 }
 
-// migrateAndReconcile applies every module's migrations (tracking v2 needs the catalog tables)
-// and then completes rows written by older binaries.
-func migrateAndReconcile(db *sql.DB, path string, now func() time.Time) (int, string, error) {
+// orderedMigrations enumera el orden por dependencias entre módulos.
+func orderedMigrations() []platformdb.Migration {
 	trackingSteps := tracking.Migrations()
-	migrations := append([]platformdb.Migration{trackingSteps[0]}, catalog.Migrations()...)
-	migrations = append(migrations, trackingSteps[1:]...)
-	migrations = append(migrations, countdown.Migrations()...)
-	migrations = append(migrations, wellbeing.Migrations()...)
-	applied, backup, err := platformdb.Migrate(db, path, migrations, now)
+	catalogSteps := catalog.Migrations()
+	countdownSteps := countdown.Migrations()
+	wellbeingSteps := wellbeing.Migrations()
+	return []platformdb.Migration{
+		trackingSteps[0],  // tracking v1: esquema base
+		catalogSteps[0],   // catalog v1: tablas referenciadas por tracking
+		catalogSteps[1],   // catalog v2: unicidad de clientes
+		trackingSteps[1],  // tracking v2: referencia projects
+		trackingSteps[2],  // tracking v3: identidad de tareas
+		trackingSteps[3],  // tracking v4: integridad e índices
+		countdownSteps[0], // countdown v1
+		countdownSteps[1], // countdown v2: referencia entries
+		wellbeingSteps[0], // wellbeing v1
+		wellbeingSteps[1], // wellbeing v2: registro de eventos
+	}
+}
+
+// migrateAndReconcile applies module migrations in dependency order and then completes rows
+// written by older binaries.
+func migrateAndReconcile(db *sql.DB, path string, now func() time.Time) (int, string, error) {
+	applied, backup, err := platformdb.Migrate(db, path, orderedMigrations(), now)
 	if err != nil {
 		return applied, backup, err
 	}

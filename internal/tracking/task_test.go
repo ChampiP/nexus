@@ -109,6 +109,57 @@ func TestReconcileFillsNullTaskUID(t *testing.T) {
 	}
 }
 
+func TestIntegrityRulesRejectSecondRunningAndInvalidIntervals(t *testing.T) {
+	s, err := openSQLite(filepath.Join(t.TempDir(), "integrity.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.db.Close()
+	first, err := s.Insert(Entry{TaskUID: "same", Title: "a", StartedAt: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Insert(Entry{TaskUID: "same", Title: "b", StartedAt: 11}); !errors.Is(err, ErrAlreadyRunning) {
+		t.Fatalf("second running insert = %v", err)
+	}
+	if _, err := s.db.Exec(`INSERT INTO entries(uid,task_uid,kind,title,started_at,ended_at) VALUES('bad','bad-task','work','bad',20,19)`); err == nil {
+		t.Fatal("invalid insert interval accepted")
+	}
+	if _, err := s.db.Exec(`UPDATE entries SET ended_at = 9 WHERE id = ?`, first.ID); err == nil {
+		t.Fatal("invalid update interval accepted")
+	}
+}
+
+func TestMigrationV4RepairsMultipleRunningSessions(t *testing.T) {
+	db, path, all := openLegacy(t)
+	if _, _, err := platformdb.Migrate(db, path, all[:4], time.Now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO entries(uid,task_uid,kind,title,started_at) VALUES
+		('older','task','work','older',10),('newer','task','work','newer',20)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := platformdb.Migrate(db, path, all, func() time.Time { return time.Now().Add(time.Minute) }); err != nil {
+		t.Fatal(err)
+	}
+	var oldEnd sql.NullInt64
+	if err := db.QueryRow(`SELECT ended_at FROM entries WHERE uid='older'`).Scan(&oldEnd); err != nil || !oldEnd.Valid || oldEnd.Int64 != 20 {
+		t.Fatalf("older ended_at = %v, %v", oldEnd, err)
+	}
+	if got := countRunning(t, db, "task"); got != 1 {
+		t.Fatalf("running sessions = %d", got)
+	}
+}
+
+func countRunning(t *testing.T, db *sql.DB, task string) int {
+	t.Helper()
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM entries WHERE task_uid=? AND ended_at IS NULL AND deleted_at IS NULL`, task).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
 func TestStartIsNewTaskAndResumeJoinsIt(t *testing.T) {
 	now := int64(1000)
 	tracker := newBreakTracker(t, &now)

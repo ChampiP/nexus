@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"nexus/internal/catalog"
+	"nexus/internal/countdown"
 	platformdb "nexus/internal/platform/db"
 	"nexus/internal/tracking"
 )
@@ -63,6 +64,62 @@ func count(t *testing.T, db *sql.DB, query string) int {
 	return n
 }
 
+func TestOrderedMigrationsAreIdempotentAndCreateIntegrityRules(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		t.Run(map[bool]string{false: "fresh", true: "phase_one"}[legacy], func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "nexus.db")
+			db, err := platformdb.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if legacy {
+				if _, err := db.Exec(legacySchema); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for run := 0; run < 2; run++ {
+				if _, _, err := platformdb.Migrate(db, path, orderedMigrations(), func() time.Time { return time.Unix(1_800_000_000+int64(run), 0) }); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, name := range []string{"entries_started_at_idx", "entries_project_started_idx", "entries_one_running_per_task_idx", "clients_null_org_name_idx", "countdowns_one_active_idx", "countdowns_active_idx", "wellbeing_events_at_idx"} {
+				if got := count(t, db, `SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='`+name+`'`); got != 1 {
+					t.Errorf("falta índice %s", name)
+				}
+			}
+			for _, name := range []string{"entries_ended_after_started_insert", "entries_ended_after_started_update"} {
+				if got := count(t, db, `SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='`+name+`'`); got != 1 {
+					t.Errorf("falta trigger %s", name)
+				}
+			}
+		})
+	}
+}
+
+func TestPurgingEntryNullsCountdownReference(t *testing.T) {
+	db, path := legacyDB(t)
+	upgrade(t, db, path)
+	entry, err := tracking.NewSQLite(db).Insert(tracking.Entry{Title: "break", Kind: tracking.KindBreak, StartedAt: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	breakRow, err := countdown.NewSQLite(db).Insert(countdown.Break{Label: "Break", StartedAt: 10, EndsAt: 20, EntryID: entry.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE entries SET deleted_at=1 WHERE id=?`, entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := tracking.NewSQLite(db).Purge(2); err != nil || n != 1 {
+		t.Fatalf("Purge=%d, %v", n, err)
+	}
+	var entryID sql.NullInt64
+	if err := db.QueryRow(`SELECT entry_id FROM countdowns WHERE id=?`, breakRow.ID).Scan(&entryID); err != nil || entryID.Valid {
+		t.Fatalf("entry_id=%v err=%v", entryID, err)
+	}
+}
+
 func TestFreshDatabase(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "data", "nexus.db")
 	db, err := platformdb.Open(path)
@@ -71,7 +128,7 @@ func TestFreshDatabase(t *testing.T) {
 	}
 	defer db.Close()
 	applied, backup := upgrade(t, db, path)
-	if applied != 6 || backup != "" {
+	if applied != 10 || backup != "" {
 		t.Fatalf("applied = %d, backup = %q", applied, backup)
 	}
 	for file, want := range map[string]os.FileMode{filepath.Dir(path): 0o700, path: 0o600} {
@@ -85,7 +142,7 @@ func TestFreshDatabase(t *testing.T) {
 func TestLegacyDatabaseIsAdoptedWithoutLosingData(t *testing.T) {
 	db, path := legacyDB(t)
 	applied, backup := upgrade(t, db, path)
-	if applied != 6 || backup == "" {
+	if applied != 10 || backup == "" {
 		t.Fatalf("applied = %d, backup = %q", applied, backup)
 	}
 	old, err := sql.Open("sqlite", backup)
