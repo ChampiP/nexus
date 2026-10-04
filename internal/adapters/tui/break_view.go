@@ -19,7 +19,7 @@ func (m Model) breakView() string {
 		card = m.activeCard()
 	} else {
 		lines[l.headingY] = titleStyle.Render("EMPEZAR BREAK")
-		card = m.startForm(l)
+		card = m.startForm(m.width, l)
 	}
 	box := panel.Width(max(30, m.width-2)).Render(strings.Join(card, "\n"))
 	for i, line := range strings.Split(box, "\n") {
@@ -77,7 +77,7 @@ func (m Model) activeCard() []string {
 func clockTime(unix int64) string { return time.Unix(unix, 0).Format("15:04") }
 
 // startForm son las líneas del formulario para empezar un break.
-func (m Model) startForm(l breakLayout) []string {
+func (m Model) startForm(width int, l breakLayout) []string {
 	f := m.bp.form
 	mark := func(row int) string {
 		if !m.bp.onTabs && f.row == row {
@@ -105,7 +105,12 @@ func (m Model) startForm(l breakLayout) []string {
 		if project == "" {
 			project = "Sin proyecto"
 		}
-		lines = append(lines, mark(breakRowFirst+i)+fmt.Sprintf("%s %s · %s", box, truncate(timer.Title, 30), truncate(project, 18)))
+		titleWidth, projectWidth := 30, 18
+		if width >= 120 {
+			available := max(1, width-16)
+			titleWidth, projectWidth = available*2/3, available-available*2/3
+		}
+		lines = append(lines, mark(breakRowFirst+i)+fmt.Sprintf("%s %s · %s", box, truncate(timer.Title, titleWidth), truncate(project, projectWidth)))
 	}
 	button := -1
 	if !m.bp.onTabs && f.row == f.buttonsRow() {
@@ -116,6 +121,10 @@ func (m Model) startForm(l breakLayout) []string {
 
 // todayLines son las líneas bajo «BREAKS DE HOY»: los breaks más recientes y el total.
 func (m Model) todayLines(l breakLayout) []string {
+	return m.todayLinesWidth(m.width, l)
+}
+
+func (m Model) todayLinesWidth(width int, l breakLayout) []string {
 	if len(m.bp.today) == 0 {
 		return []string{label.Render("Sin breaks hoy")}
 	}
@@ -128,7 +137,11 @@ func (m Model) todayLines(l breakLayout) []string {
 		}
 		total += seconds
 		if i >= len(m.bp.today)-l.shown {
-			lines = append(lines, fmt.Sprintf("%s – %s · %s · %s", clockTime(entry.StartedAt), end, formatDuration(seconds), truncate(entry.Title, 30)))
+			titleWidth := 30
+			if width >= 120 {
+				titleWidth = max(1, width-45)
+			}
+			lines = append(lines, fmt.Sprintf("%s – %s · %s · %s", clockTime(entry.StartedAt), end, formatDuration(seconds), truncate(entry.Title, titleWidth)))
 		}
 	}
 	return append(lines, titleStyle.Render("Total "+formatDuration(total)))
@@ -156,14 +169,42 @@ func (m Model) activePauseLines() []string {
 		enabled = 0
 	}
 	focusRow := func(row int) bool { return !m.bp.onTabs && m.bp.settingsRow == row }
-	return []string{
-		titleStyle.Render("PAUSAS ACTIVAS"),
-		status + fmt.Sprintf(" · Hoy: %d hechas · %d saltada%s", counters.Done, counters.Skipped, pluralSuffix(counters.Skipped)),
-		pauseRowPrefix("Activar", focusRow(0)) + "     " + renderButtons([]string{"Sí", "No"}, enabled),
-		pauseRowPrefix("Cada", focusRow(1)) + renderButtons([]string{"10 min", "20 min", "30 min", "45 min", "60 min"}, pauseEveryIndex(cfg.Every)),
-		pauseRowPrefix("Dura", focusRow(2)) + renderButtons([]string{"10 s", "15 s", "20 s", "30 s", "1 min", "2 min", "5 min"}, pauseDurationIndex(cfg.Duration)),
-		renderButtons(pauseButtonLabels(m.pauseStatus, m.now), pauseSelected(m.bp)),
+	statusLine := status + fmt.Sprintf(" · Hoy: %d hechas · %d saltada%s", counters.Done, counters.Skipped, pluralSuffix(counters.Skipped))
+	if geometry, wide := m.wideGeometry(); wide {
+		statusLine = truncateToWidth(statusLine, geometry.rightWidth-4)
 	}
+	lines := []string{
+		titleStyle.Render("PAUSAS ACTIVAS"),
+		statusLine,
+	}
+	if _, wide := m.wideGeometry(); wide {
+		lines = append(lines, pauseRowPrefix("Activar", focusRow(0)))
+		lines = append(lines, renderButtons([]string{"Sí", "No"}, enabled))
+		lines = append(lines, pauseRowPrefix("Cada", focusRow(1)))
+		for i, option := range []string{"10 min", "20 min", "30 min", "45 min", "60 min"} {
+			selected := -1
+			if pauseEveryIndex(cfg.Every) == i {
+				selected = 0
+			}
+			lines = append(lines, renderButtons([]string{option}, selected))
+		}
+		lines = append(lines, pauseRowPrefix("Dura", focusRow(2)))
+		for i, option := range []string{"10 s", "15 s", "20 s", "30 s", "1 min", "2 min", "5 min"} {
+			selected := -1
+			if pauseDurationIndex(cfg.Duration) == i {
+				selected = 0
+			}
+			lines = append(lines, renderButtons([]string{option}, selected))
+		}
+		lines = append(lines, renderButtons(pauseButtonLabels(m.pauseStatus, m.now), pauseSelected(m.bp)))
+		return lines
+	}
+	return append(lines,
+		pauseRowPrefix("Activar", focusRow(0))+"     "+renderButtons([]string{"Sí", "No"}, enabled),
+		pauseRowPrefix("Cada", focusRow(1))+renderButtons([]string{"10 min", "20 min", "30 min", "45 min", "60 min"}, pauseEveryIndex(cfg.Every)),
+		pauseRowPrefix("Dura", focusRow(2))+renderButtons([]string{"10 s", "15 s", "20 s", "30 s", "1 min", "2 min", "5 min"}, pauseDurationIndex(cfg.Duration)),
+		renderButtons(pauseButtonLabels(m.pauseStatus, m.now), pauseSelected(m.bp)),
+	)
 }
 
 func pluralSuffix(count int) string {

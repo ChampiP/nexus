@@ -37,6 +37,9 @@ func main() {
 const daemonTick = 10 * time.Second
 
 func run(args []string) error {
+	if wantsHelp(args) {
+		return cli.RunWithOptions([]string{"help"}, nil, cli.Options{}, os.Stdout, os.Stderr)
+	}
 	path, err := databasePath()
 	if err != nil {
 		return err
@@ -239,6 +242,18 @@ func migrateAndReconcile(db *sql.DB, path string, now func() time.Time) (int, st
 	}
 	err = tracking.NewSQLite(db).Reconcile(catalogProjects{catalog.NewSQLite(db)})
 	return applied, backup, err
+}
+
+func wantsHelp(args []string) bool {
+	if len(args) > 0 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help") {
+		return true
+	}
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			return true
+		}
+	}
+	return false
 }
 
 func hasJSONFlag(args []string) bool {

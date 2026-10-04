@@ -34,44 +34,47 @@ const (
 
 // Model contains all state needed to render and update the single-screen interface.
 type Model struct {
-	tracker         Tracker
-	inputs          []textinput.Model
-	running         []tracking.Entry
-	recent          []tracking.TaskSummary // tareas de RECIENTES, una fila por tarea
-	tasks           map[string]tracking.TaskSummary
-	totals          []tracking.ProjectTotal
-	todaySeconds    int64
-	week            bool
-	focus           focusTarget
-	focusedRunning  int
-	focusedRecent   int
-	rowButton       int
-	edit            *editState
-	confirm         *confirmState
-	lastDeleted     *tracking.TaskSummary
-	undoUntil       time.Time
-	pickerOpen      bool
-	pickerIndex     int
-	pickerScroll    int
-	runScroll       int
-	width, height   int
-	now             time.Time
-	message         string
-	selectedProject string
-	catalog         Catalog
-	tree            []catalog.TreeOrganization
-	screen          screen
-	cat             catalogState
-	breaks          Breaks
-	wellbeing       Wellbeing
-	tryPause        func()
-	pauseStatus     wellbeing.Status
-	pauseErr        error
-	brk             *countdown.Break
-	bp              breakPage
-	wasOverdue      bool
-	spin            spinner.Model
-	fastActive      bool // hay un tick rápido en vuelo
+	tracker           Tracker
+	inputs            []textinput.Model
+	running           []tracking.Entry
+	recent            []tracking.TaskSummary // tareas de RECIENTES, una fila por tarea
+	tasks             map[string]tracking.TaskSummary
+	totals            []tracking.ProjectTotal
+	todaySeconds      int64
+	week              bool
+	focus             focusTarget
+	focusedRunning    int
+	focusedRecent     int
+	rowButton         int
+	wideColumn        int
+	wideRemembered    [3]navCell
+	wideHasRemembered [3]bool
+	edit              *editState
+	confirm           *confirmState
+	lastDeleted       *tracking.TaskSummary
+	undoUntil         time.Time
+	pickerOpen        bool
+	pickerIndex       int
+	pickerScroll      int
+	runScroll         int
+	width, height     int
+	now               time.Time
+	message           string
+	selectedProject   string
+	catalog           Catalog
+	tree              []catalog.TreeOrganization
+	screen            screen
+	cat               catalogState
+	breaks            Breaks
+	wellbeing         Wellbeing
+	tryPause          func()
+	pauseStatus       wellbeing.Status
+	pauseErr          error
+	brk               *countdown.Break
+	bp                breakPage
+	wasOverdue        bool
+	spin              spinner.Model
+	fastActive        bool // hay un tick rápido en vuelo
 }
 
 // NewModel creates a ready-to-type model backed by the application tracker.
@@ -175,8 +178,14 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen == screenCatalog {
 			return m, m.updateCatalogKey(msg)
 		}
+		if m.screen == screenBreak && m.width >= 120 {
+			return m, m.updateWideKey(msg)
+		}
 		if m.screen == screenBreak {
 			return m, m.updateBreakKey(msg)
+		}
+		if m.width >= 120 && m.screen == screenTimers {
+			return m, m.updateWideKey(msg)
 		}
 		if msg.Type == tea.KeyCtrlZ && m.confirm == nil {
 			m.restoreLast()

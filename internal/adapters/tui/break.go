@@ -189,7 +189,8 @@ func (m *Model) syncBreakForm() {
 // syncBreakFocus da el cursor al campo numérico solo cuando está enfocado en la pantalla de break.
 func (m *Model) syncBreakFocus() {
 	f := &m.bp.form
-	if m.screen == screenBreak && m.brk == nil && !m.bp.onTabs && f.row == breakRowCustom {
+	wideBreakFocus := m.width >= 120 && m.wideColumn == 2 && (m.screen == screenTimers || m.screen == screenBreak)
+	if (wideBreakFocus || (m.screen == screenBreak && m.width < 120)) && m.brk == nil && !m.bp.onTabs && f.row == breakRowCustom {
 		f.custom.Focus()
 	} else {
 		f.custom.Blur()
@@ -199,6 +200,7 @@ func (m *Model) syncBreakFocus() {
 // openBreakPage va directo a los botones del break activo, por ejemplo desde el indicador.
 func (m *Model) openBreakPage() {
 	m.switchScreen(screenBreak)
+	m.wideColumn = 2
 	m.bp.onTabs, m.bp.action = false, 0
 	m.syncBreakFocus()
 }
@@ -546,6 +548,9 @@ func (m *Model) updateBreakMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	x, y := msg.X, msg.Y
 	if m.clickTab(l.tabs, x, y) {
 		return *m, nil
+	}
+	if geometry, wide := m.wideGeometry(); wide && m.screen == screenBreak {
+		x -= geometry.rightX
 	}
 	defer m.syncBreakFocus()
 	f := &m.bp.form

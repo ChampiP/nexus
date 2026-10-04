@@ -33,6 +33,10 @@ type breakLayout struct {
 // breakLayout calcula las posiciones a partir del estado.
 func (m Model) breakLayout() breakLayout {
 	width := m.width
+	wide, geometryOK := m.wideGeometry()
+	if geometryOK {
+		width = wide.rightWidth
+	}
 	if width < 1 {
 		width = 80
 	}
@@ -46,12 +50,20 @@ func (m Model) breakLayout() breakLayout {
 	} else {
 		f := m.bp.form
 		l.durations = buttonRects(y, x+breakDurationX, breakDurationLabels)
-		l.custom = rect{0, y + 1, width, 1}
+		customX, customWidth := 0, width
+		if geometryOK {
+			customX, customWidth = 2+2+lipgloss.Width("Otro (min): "), 4
+		}
+		l.custom = rect{customX, y + 1, customWidth, 1}
 		next := y + 2
 		if len(f.timers) > 0 {
 			next++ // línea «Detener:»
 			for i := range f.timers {
-				l.checks = append(l.checks, rect{0, next + i, width, 1})
+				checkX, checkWidth := 0, width
+				if geometryOK {
+					checkX, checkWidth = 4, width-6
+				}
+				l.checks = append(l.checks, rect{checkX, next + i, checkWidth, 1})
 			}
 			next += len(f.timers)
 		}
@@ -74,6 +86,26 @@ func (m Model) breakLayout() breakLayout {
 		l.pauseOptions[1] = buttonRects(l.pauseY+4, recentContentX+14, []string{"10 min", "20 min", "30 min", "45 min", "60 min"})
 		l.pauseOptions[2] = buttonRects(l.pauseY+5, recentContentX+14, []string{"10 s", "15 s", "20 s", "30 s", "1 min", "2 min", "5 min"})
 		l.pauseButtons = buttonRects(l.pauseY+6, recentContentX, pauseButtonLabels(m.pauseStatus, m.now))
+		if geometryOK {
+			bodyLines := 0
+			if m.brk == nil {
+				bodyLines = len(m.startForm(width, l))
+			} else {
+				bodyLines = len(m.activeCard())
+			}
+			bodyLines += 1 + len(m.todayLinesWidth(width, l))
+			pausePanelTop := 1 + 1 + bodyLines + 2
+			l.pauseY = pausePanelTop + 1
+			l.pauseOptions = [3][]rect{}
+			l.pauseOptions[0] = buttonRects(l.pauseY+4, recentContentX, []string{"Sí", "No"})
+			for i, option := range []string{"10 min", "20 min", "30 min", "45 min", "60 min"} {
+				l.pauseOptions[1] = append(l.pauseOptions[1], buttonRects(l.pauseY+6+i, recentContentX, []string{option})...)
+			}
+			for i, option := range []string{"10 s", "15 s", "20 s", "30 s", "1 min", "2 min", "5 min"} {
+				l.pauseOptions[2] = append(l.pauseOptions[2], buttonRects(l.pauseY+12+i, recentContentX, []string{option})...)
+			}
+			l.pauseButtons = buttonRects(l.pauseY+19, recentContentX, pauseButtonLabels(m.pauseStatus, m.now))
+		}
 	}
 	return l
 }

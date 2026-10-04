@@ -1,6 +1,96 @@
 package tui
 
-import tea "github.com/charmbracelet/bubbletea"
+import (
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+)
+
+func (m *Model) updateWideMouse(msg tea.MouseMsg, g wideGeometry, layout screenLayout) (tea.Model, tea.Cmd) {
+	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+		return m.updateMouseNarrowFallback(msg)
+	}
+	if msg.X >= g.rightX && msg.X < g.rightX+g.rightWidth {
+		local := msg
+		local.X -= g.rightX
+		return m.updateBreakMouse(local)
+	}
+	if msg.X >= g.leftX && msg.X < g.leftX+g.leftWidth {
+		for i, zone := range layout.fields {
+			if zone.contains(msg.X, msg.Y) {
+				m.focus = focusTarget(i)
+				if m.focus == focusProject {
+					m.openProjectPicker()
+				} else {
+					m.closeProjectPicker()
+					m.syncInputFocus()
+				}
+				return m, nil
+			}
+		}
+		for i, zone := range layout.options {
+			if zone.contains(msg.X, msg.Y) {
+				options := m.projectOptions()
+				if i < len(options) && options[i].selectable {
+					m.pickerIndex = i
+					m.selectProject()
+				}
+				return m, nil
+			}
+		}
+		if m.edit != nil {
+			for i, zone := range layout.editButtons {
+				if zone.contains(msg.X, msg.Y) {
+					m.activateEditButton(focusEditSave + focusTarget(i))
+					return m, nil
+				}
+			}
+			return m, nil
+		}
+		if layout.start.contains(msg.X, msg.Y) {
+			m.focus = focusStart
+			m.startTimer()
+			return m, nil
+		}
+		if m.clickRows(focusRunningStart, layout.running, m.runScroll, msg.X, msg.Y) {
+			return m, nil
+		}
+		return m, nil
+	}
+	if msg.X >= g.centerX && msg.X < g.centerX+g.centerWidth {
+		if m.clickRows(focusRecent, layout.recent, 0, msg.X, msg.Y) {
+			return m, nil
+		}
+		if layout.today.contains(msg.X, msg.Y) {
+			m.week, m.focus = false, focusToday
+			m.refresh()
+		} else if layout.week.contains(msg.X, msg.Y) {
+			m.week, m.focus = true, focusWeek
+			m.refresh()
+		}
+	}
+	return m, nil
+}
+
+func (m *Model) updateMouseNarrowFallback(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if msg.Action != tea.MouseActionPress {
+		return m, nil
+	}
+	switch msg.Button {
+	case tea.MouseButtonWheelUp:
+		if m.pickerOpen {
+			m.movePicker(-1)
+		} else if len(m.running) > 0 && m.runScroll > 0 {
+			m.runScroll--
+		}
+	case tea.MouseButtonWheelDown:
+		if m.pickerOpen {
+			m.movePicker(1)
+		} else if m.runScroll+1 < len(m.running) {
+			m.runScroll++
+		}
+	}
+	return m, nil
+}
 
 // focusRow enfoca una fila (temporizador o reciente) y deja resaltado el botón indicado.
 func (m *Model) focusRow(kind focusTarget, index, button int) {
@@ -51,8 +141,38 @@ func (m *Model) clickStatus(layout screenLayout, x, y int) bool {
 	return false
 }
 
-func (m *Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+func (m Model) wideMouseLayout() (wideGeometry, screenLayout, bool) {
+	geometry, wide := m.wideGeometry()
 	layout := m.computeLayout()
+	if !wide {
+		return geometry, layout, false
+	}
+	layout.options = nil
+	layout.fields = [3]rect{
+		{geometry.leftContentX + 2, 4, geometry.leftWidth - 6, 1},
+		{geometry.leftContentX, 6, geometry.leftWidth - 4, 1},
+		{geometry.leftContentX + 2, 8, geometry.leftWidth - 6, 1},
+	}
+	if m.pickerOpen {
+		for i := range m.projectOptions() {
+			layout.options = append(layout.options, rect{geometry.leftContentX, 9 + i, geometry.leftWidth - 4, 1})
+		}
+	}
+	if m.edit == nil {
+		layout.start = rect{geometry.leftContentX + 2, geometry.startY, lipgloss.Width("[ Iniciar ]"), 1}
+	} else {
+		layout.editButtons = buttonRects(geometry.startY, geometry.leftContentX, editLabels)
+	}
+	layout.running, layout.recent = geometry.runningRows, geometry.recent
+	layout.today, layout.week = geometry.today, geometry.week
+	return geometry, layout, true
+}
+
+func (m *Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	geometry, layout, wide := m.wideMouseLayout()
+	if wide {
+		return m.updateWideMouse(msg, geometry, layout)
+	}
 	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 		if m.clickStatus(layout, msg.X, msg.Y) || m.confirm != nil {
 			return m, nil

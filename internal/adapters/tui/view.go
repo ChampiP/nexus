@@ -19,6 +19,9 @@ func (m Model) View() string {
 	if m.screen == screenCatalog {
 		return m.catalogView()
 	}
+	if ok, left, center, right := wideLayout(m.width); ok && (m.screen == screenTimers || m.screen == screenBreak) {
+		return m.wideView(left, center, right)
+	}
 	if m.screen == screenBreak {
 		return m.breakView()
 	}
