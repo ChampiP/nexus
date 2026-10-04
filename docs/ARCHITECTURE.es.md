@@ -23,6 +23,7 @@ nada expuesto a internet salvo que el usuario lo active explícitamente**.
 5. **El humano aprueba los efectos.** Todo lo que cambie un sistema externo, o lo que pida una IA, necesita aprobación explícita dentro de Nexus.
 6. **Tecnología aburrida.** Go, SQLite, servicios de usuario de systemd, notificaciones freedesktop y el llavero del sistema.
 7. **Cambios reversibles.** Las migraciones del esquema solo agregan y se respaldan; los pasos destructivos van aparte y de forma explícita.
+8. **Sin sobreingeniería.** Construir lo más simple que funcione hoy para un usuario; agregar una capa solo cuando aparezca una necesidad real. Rápido y bonito vale más que completo.
 
 ## 2. Investigación de viabilidad (2026-10-03)
 
@@ -32,7 +33,7 @@ fuentes no coincidían, la tabla se queda con la fuente primaria.
 | Pregunta | Hallazgo | Consecuencia para Nexus |
 |---|---|---|
 | ¿Se puede publicar como plugin público de Omarchy? | Sí. `omarchy plugin add <url-git>` clona **un repositorio git completo que tenga `manifest.json` en la raíz** dentro de `~/.config/omarchy/plugins/<id>/`. El instalador nunca compila ni ejecuta scripts. Los plugins corren **sin aislamiento** dentro de `omarchy-shell`. Existe un índice comunitario (plugins.omarchy.org) y más de 1.100 repositorios usan el tema de GitHub `omarchy-plugin`. | El plugin de la barra necesita **su propio repositorio** (el código Go no debe clonarse dentro de la carpeta de plugins del shell). El binario `nexus` se instala aparte. El QML debe ser pequeño y no guardar secretos. |
-| ¿Puede ChatGPT web usar un servidor MCP de Nexus? | ChatGPT web solo llega a servidores MCP por **HTTPS público**; no puede llegar a `localhost`. Según la documentación de OpenAI, ChatGPT web usa herramientas MCP remotas a través de **plugins**, y el modo desarrollador con acciones de escritura está en beta para Business/Enterprise/Edu. OpenAI también ofrece **Secure MCP Tunnel** (`openai/tunnel-client`) para conectar un MCP local sin exponerlo públicamente. | **Primero MCP local** (stdio): hoy funciona con Codex CLI, Claude Code, Cursor y otros. El acceso remoto para ChatGPT web es una fase posterior y opcional. Antes de construirlo hay que volver a verificar los planes requeridos y el soporte del túnel. |
+| ¿Puede ChatGPT web usar un servidor MCP de Nexus? | ChatGPT web solo llega a servidores MCP por **HTTPS público**; no puede llegar a `localhost`. La documentación de OpenAI describe el modo desarrollador con escritura como beta para Business/Enterprise/Edu, pero **el autor verificó el 2026-10-03 que una cuenta ChatGPT Plus se conecta a un servidor MCP propio expuesto con una URL de ngrok y usa sus herramientas**. OpenAI también ofrece **Secure MCP Tunnel** (`openai/tunnel-client`). | Es viable con el plan del autor: un servidor MCP HTTP local expuesto con un túnel y protegido por un token secreto en la URL (§11.3). El MCP local por stdio sigue disponible para agentes de escritorio. |
 | ¿Qué versión de MCP? | La especificación vigente es **2026-07-28**: núcleo sin estado (sin `Mcp-Session-Id`), transportes stdio y Streamable HTTP, autorización basada en OAuth 2.1 + Protected Resource Metadata (RFC 9728) + resource indicators (RFC 8707). SDK oficial de Go: `github.com/modelcontextprotocol/go-sdk`. | Usar el SDK oficial de Go. Modelar el estado como identificadores explícitos en los argumentos de las herramientas, nunca como estado de la conexión. |
 | ¿Gmail y Google Calendar en una app pública? | Los permisos de lectura/modificación de Gmail son **restringidos**. Una app pública con un cliente OAuth compartido necesitaría verificación de Google más una auditoría de seguridad **CASA** anual y de pago. Los permisos de Calendar son **sensibles** (verificación, sin CASA). La salida habitual para apps locales de código abierto es **"trae tu propio cliente"** (BYOC): cada usuario crea su propio proyecto de Google Cloud y un cliente OAuth de tipo "Desktop app". Si la pantalla de consentimiento queda en *Testing*, los tokens de actualización vencen a los 7 días; publicarla *In production* sin verificar lo evita (el usuario ve el aviso de "app no verificada"). | Los conectores de Google usan **BYOC**, nunca un client ID incluido en Nexus. Redirección a loopback + PKCE. Se entrega una guía de configuración. |
 | ¿Notion? | Un **token de integración interna** por espacio de trabajo (el usuario le comparte las bases de datos). La versión **2025-09-03** de la API reemplazó las consultas de bases de datos por **data sources** (`data_source_id`). El límite es de unas 3 solicitudes por segundo. Hay webhooks, pero necesitan un endpoint público. | Token en el llavero; fijar `Notion-Version`; cliente con "token bucket"; consultas periódicas en lugar de webhooks (no hay endpoint público). |
@@ -178,9 +179,9 @@ como columna de compatibilidad durante una versión (ver el plan del catálogo e
 
 ## 9. Breaks y bienestar
 
-**Cuenta regresiva de break.** "Break de 1 h" inicia una entrada `break` y un `Countdown`. Los
-temporizadores de trabajo que estén corriendo se detienen y se recuerdan en `resume_entry_uids`.
-Cuando pasa la hora límite:
+**Cuenta regresiva de break.** "Break de 1 h" inicia una entrada `break` y un `Countdown`. Si hay
+temporizadores de trabajo corriendo, Nexus **pregunta cada vez** cuáles detener (todos vienen
+marcados); los detenidos se recuerdan en `resume_entry_uids`. Cuando pasa la hora límite:
 
 1. El daemon envía una notificación con botones: **Volver al trabajo** (termina el break y
    reinicia los temporizadores recordados), **+10 min**, **Terminar break**.
@@ -236,6 +237,10 @@ paquete y se registra en la raíz de composición.
 `nexus mcp` habla MCP por **stdio** con el SDK oficial de Go. El cliente de IA lo inicia como
 proceso hijo; nada escucha en la red. Hoy funciona con Codex CLI, Claude Code y otros clientes de escritorio.
 
+Los agentes que tienen una terminal (Claude Code o Codex en otra ventana) ya pueden manejar Nexus
+con la CLI y su contrato `--json`. MCP agrega herramientas tipadas y la política por niveles de
+abajo, así que es la puerta preferida para los clientes de IA.
+
 ### 11.2 Diseño de herramientas
 
 | Nivel | Ejemplos | Política |
@@ -248,17 +253,31 @@ proceso hijo; nada escucha en la red. Hoy funciona con Codex CLI, Claude Code y 
 Los resultados que contienen texto de terceros (correos, descripciones de tareas) se devuelven
 marcados claramente como datos, recortados y sin formato. Cada llamada MCP queda en el registro de auditoría.
 
-### 11.3 Remoto (ChatGPT web), más adelante y opcional
+### 11.3 Remoto (ChatGPT web), opcional
 
-ChatGPT web necesita un endpoint HTTPS público y OAuth. Ese endpoint tendría poder sobre el correo,
-el calendario y las tareas del usuario, así que solo sale con su propio modelo de amenazas y con estas restricciones:
+Camino verificado: ChatGPT se conecta a una URL MCP expuesta con un túnel. Nexus lo mantiene simple:
 
-- Apagado por defecto. Se activa con un comando explícito; la CLI muestra qué expone.
-- Streamable HTTP escuchando solo en `127.0.0.1`, alcanzado mediante **OpenAI Secure MCP Tunnel**
-  si ChatGPT lo soporta para el plan del usuario; si no, mediante un túnel que controle el usuario (Cloudflare Tunnel).
-- Nexus actúa como servidor de recursos OAuth 2.1; los tokens duran poco, tienen permisos por
-  nivel y quedan atados al recurso (RFC 8707). Los clientes remotos solo reciben el nivel de lectura y las PendingActions.
-- Validación de origen, límite de solicitudes, registro de auditoría e interruptor de apagado (`nexus mcp remote disable`).
+```
+nexus mcp serve                                   # Streamable HTTP en 127.0.0.1, imprime la URL para pegar en ChatGPT
+cloudflared tunnel --url http://127.0.0.1:<puerto> # túnel rápido de Cloudflare, sin cuenta
+```
+
+- **Apagado por defecto.** `nexus mcp serve` solo escucha en `127.0.0.1`. El túnel lo elige el
+  usuario: túnel rápido de Cloudflare (sin iniciar sesión; URL aleatoria `*.trycloudflare.com` que
+  cambia en cada reinicio; pensado para pruebas), ngrok, o un túnel con nombre de Cloudflare (URL
+  fija, requiere cuenta).
+- **Autenticación v1: token secreto en la URL.** Nexus genera un token aleatorio de 256 bits, lo
+  guarda en el llavero y sirve MCP solo en `/mcp/<token>`; cualquier otra ruta devuelve 404.
+  Funciona con la opción "sin autenticación" de los conectores de ChatGPT.
+  - Debilidades conocidas: la URL *es* la contraseña. Puede quedar en los logs del túnel, en el
+    historial y en la configuración de ChatGPT, y no vence.
+  - Mitigaciones: `nexus mcp token rotate`, comparación en tiempo constante, límite de solicitudes,
+    auditoría y un conjunto remoto reducido (nivel de lectura, acciones locales de temporizadores y
+    PendingActions; sin herramientas destructivas ni escrituras externas directas).
+- **Autenticación v2, solo si hace falta:** servidor de recursos OAuth 2.1 con tokens de corta
+  duración y permisos acotados, cuando el acceso remoto pueda cambiar correos o el calendario, o
+  cuando lo use más gente.
+- **Interruptor de apagado:** detener `nexus mcp serve` o rotar el token corta el acceso al instante.
 
 ## 12. Modelo de seguridad
 
@@ -326,12 +345,13 @@ Antes de la primera versión pública hace falta un `SECURITY.md` con un canal p
 | 0 | Tracker: CLI, TUI, popup de la barra | **Hecha** |
 | 1 | Catálogo (organización → cliente → proyecto), editar y eliminar entradas con papelera, renombrar/unir proyectos, refactor a paquete por módulo, permisos de archivos | Los datos actuales migrados con respaldo; el TUI y la CLI pueden corregir cualquier error |
 | 2 | Daemon, cuenta regresiva de break con botones en la notificación, avisos de movimiento, `nexus doctor` | Un break olvidado produce una notificación y un estado visible de tiempo excedido |
-| 3 | Versión pública: repositorio del plugin, paquete de AUR, idiomas (`es`/`en`), `SECURITY.md`, CI | Un usuario nuevo instala ambos artefactos solo con el README |
-| 4 | MCP local (stdio), niveles de lectura y escritura local, auditoría | Un cliente de IA puede iniciar, detener y reportar temporizadores |
+| 3 | Versión pública: repositorio del plugin, paquete de AUR, idiomas (`es`/`en`), tutorial de primer uso, `SECURITY.md`, CI | Un usuario nuevo instala ambos artefactos solo con el README |
+| 4 | MCP: stdio local y `nexus mcp serve` detrás de un túnel con token secreto en la URL; niveles de lectura y escritura local; auditoría | ChatGPT (Plus) y un agente de escritorio pueden iniciar, detener y reportar temporizadores |
 | 5 | Conectores de solo lectura: agenda de Calendar, tareas de Notion, correos sin leer de Gmail, Obsidian; agenda en el popup y el TUI | Los eventos y tareas de hoy se ven sin abrir otra ventana |
 | 6 | Escritura de vuelta mediante outbox y PendingActions (mover una tarjeta de Notion, crear un evento) | Cada escritura externa se aprueba, se audita y se reintenta de forma segura |
-| 7 | MCP remoto para ChatGPT web (opcional, con modelo de amenazas propio) | Modelo de amenazas revisado; el acceso remoto solo puede leer y proponer |
+| 7 | OAuth para el MCP remoto, solo si el acceso remoto debe cambiar correos o el calendario | Modelo de amenazas revisado; tokens de corta duración y acotados |
 | 8 | Automatización de navegador en los sitios propios del usuario (proceso aparte) | Simulación y aprobación antes de cualquier cambio |
+| Después | Sincronización entre varias computadoras | Aún no planificada; el `uid` y el registro de eventos dejan la puerta abierta |
 
 ## 17. Decisiones y preguntas abiertas
 
@@ -344,13 +364,14 @@ Antes de la primera versión pública hace falta un `SECURITY.md` con un canal p
 - D5. Primero MCP local por stdio; el MCP remoto es opcional y llega después.
 - D6. Las escrituras externas y las acciones pedidas por una IA requieren aprobación dentro de Nexus.
 - D7. El plugin de la barra es un cliente delgado del contrato JSON de la CLI y vive en su propio repositorio.
+- D8. Al iniciar un break se pregunta cada vez qué temporizadores en curso detener.
+- D9. El MCP remoto v1 usa un token secreto en la URL detrás de un túnel elegido por el usuario (se recomienda el túnel rápido de Cloudflare); OAuth solo cuando haga falta.
 
 **Preguntas abiertas**
 
 - P1. Nombres finales del paquete y del plugin.
 - P2. Fuente de la señal de inactividad para los avisos de movimiento.
 - P3. Si OpenAI Secure MCP Tunnel puede servir a ChatGPT web con el plan del usuario.
-- P4. Comportamiento por defecto al iniciar un break: detener todos los temporizadores de trabajo, o preguntar cada vez.
 - P5. Período de retención de las entradas en la papelera (propuesta: 30 días).
 
 ## 18. Fuentes

@@ -21,6 +21,7 @@ internet unless the user explicitly turns it on**.
 5. **The human approves effects.** Anything that changes an external system, or that an AI requested, needs explicit approval in Nexus itself.
 6. **Boring technology.** Go, SQLite, systemd user services, freedesktop notifications, the system keyring.
 7. **Reversible changes.** Schema migrations are additive and backed up; destructive steps are separate and explicit.
+8. **No overengineering.** Build the simplest thing that works for one user today; add a layer only when a real need appears. Fast and good-looking beats feature-complete.
 
 ## 2. Feasibility research (2026-10-03)
 
@@ -29,7 +30,7 @@ Each row was checked against primary sources, not only search summaries. Where t
 | Question | Finding | Consequence for Nexus |
 |---|---|---|
 | Can it ship as a public Omarchy plugin? | Yes. `omarchy plugin add <git-url>` clones a **whole git repo that has `manifest.json` at its root** into `~/.config/omarchy/plugins/<id>/`. The installer never runs build steps or hooks. Plugins run **unsandboxed** inside `omarchy-shell`. There is a community index (plugins.omarchy.org) and more than 1,100 repos use the GitHub topic `omarchy-plugin`. | The bar plugin needs its **own repository** (the Go source must not be cloned into the shell's plugin folder). The `nexus` binary is installed separately. Keep the QML small and free of secrets. |
-| Can ChatGPT web use a Nexus MCP server? | ChatGPT web reaches MCP servers only over **public HTTPS**; it cannot reach `localhost`. Per OpenAI's docs, ChatGPT web uses remote MCP tools through **plugins**, and developer mode with write actions is a beta for Business/Enterprise/Edu. OpenAI also offers **Secure MCP Tunnel** (`openai/tunnel-client`) to connect a local MCP server without exposing it publicly. | **Local MCP first** (stdio): works today with Codex CLI, Claude Code, Cursor and others. Remote access for ChatGPT web is a later, opt-in phase. Re-check the plan requirements and tunnel support before building it. |
+| Can ChatGPT web use a Nexus MCP server? | ChatGPT web reaches MCP servers only over **public HTTPS**; it cannot reach `localhost`. OpenAI's docs describe developer mode with write actions as a beta for Business/Enterprise/Edu, but **the author verified on 2026-10-03 that a ChatGPT Plus account connects to a custom MCP server exposed through an ngrok URL and uses its tools**. OpenAI also offers **Secure MCP Tunnel** (`openai/tunnel-client`). | Feasible for the author's plan: a local HTTP MCP server exposed through a tunnel, protected by a secret URL token (§11.3). Local stdio MCP stays available for desktop agents. |
 | Which MCP version? | Current spec is **2026-07-28**: stateless core (no `Mcp-Session-Id`), transports stdio and Streamable HTTP, authorization based on OAuth 2.1 + Protected Resource Metadata (RFC 9728) + resource indicators (RFC 8707). Official Go SDK: `github.com/modelcontextprotocol/go-sdk`. | Use the official Go SDK. Model state as explicit handles in tool arguments, never as connection state. |
 | Gmail and Google Calendar for a public app? | Gmail read/modify scopes are **restricted**. A public app with a shared OAuth client would need Google verification plus a yearly paid **CASA** security assessment. Calendar scopes are **sensitive** (verification, no CASA). The usual way out for open-source local apps is **bring your own client** (BYOC): each user creates their own Google Cloud project and a "Desktop app" OAuth client. If the consent screen stays in *Testing*, refresh tokens expire after 7 days; publishing it to *In production* without verification avoids that (users see an "unverified app" warning). | Google connectors use **BYOC**, never a client ID shipped by Nexus. Loopback redirect + PKCE. Ship a setup guide. |
 | Notion? | An **internal integration token** per workspace (the user shares the databases with it). API version **2025-09-03** replaced database queries with **data sources** (`data_source_id`). Rate limit is about 3 requests/second. Webhooks exist but need a public endpoint. | Token in the keyring; pin `Notion-Version`; token-bucket client; polling instead of webhooks (no public endpoint). |
@@ -172,8 +173,9 @@ one release (see the catalog plan in `odd/tasks/nexus-catalog.md`).
 
 ## 9. Breaks and well-being
 
-**Break countdown.** "Break 1 h" starts a `break` entry and a `Countdown`. Running work timers are
-stopped and remembered in `resume_entry_uids`. When the deadline passes:
+**Break countdown.** "Break 1 h" starts a `break` entry and a `Countdown`. If work timers are
+running, Nexus **asks every time** which ones to stop (all are preselected); the stopped ones are
+remembered in `resume_entry_uids`. When the deadline passes:
 
 1. The daemon sends a notification with actions: **Back to work** (stops the break, restarts the
    remembered timers), **+10 min**, **End break**.
@@ -229,6 +231,10 @@ registered in the composition root.
 child process; nothing listens on the network. This works with Codex CLI, Claude Code and other
 desktop clients today.
 
+Agents that have a shell (Claude Code or Codex in another terminal) can already drive Nexus through
+the CLI and its `--json` contract. MCP adds typed tools and the tier policy below, so it is the
+preferred door for AI clients.
+
 ### 11.2 Tool design
 
 | Tier | Examples | Policy |
@@ -241,17 +247,29 @@ desktop clients today.
 Tool results that contain third-party text (mail, task descriptions) are returned as clearly
 marked data, truncated, and stripped of markup. Every MCP call is written to the audit log.
 
-### 11.3 Remote (ChatGPT web), later and opt-in
+### 11.3 Remote (ChatGPT web), opt-in
 
-ChatGPT web needs a public HTTPS endpoint and OAuth. That endpoint would hold power over the
-user's mail, calendar and tasks, so it ships only with its own threat model and these constraints:
+Verified path: ChatGPT connects to an MCP URL exposed through a tunnel. Nexus keeps it simple:
 
-- Off by default. Enabled with an explicit command; the CLI shows what it exposes.
-- Streamable HTTP bound to `127.0.0.1`, reached through **OpenAI Secure MCP Tunnel** if ChatGPT
-  supports it for the user's plan, otherwise through a tunnel the user controls (Cloudflare Tunnel).
-- Nexus acts as an OAuth 2.1 resource server; tokens are short-lived, scoped per tier and bound to
-  the resource (RFC 8707). Remote clients get the read tier plus PendingActions only.
-- Origin validation, rate limiting, audit log, and a kill switch (`nexus mcp remote disable`).
+```
+nexus mcp serve                                   # Streamable HTTP on 127.0.0.1, prints the URL to paste in ChatGPT
+cloudflared tunnel --url http://127.0.0.1:<port>  # Cloudflare quick tunnel, no account needed
+```
+
+- **Off by default.** `nexus mcp serve` binds only to `127.0.0.1`. The tunnel is the user's choice:
+  Cloudflare quick tunnel (no login; random `*.trycloudflare.com` URL that changes on every restart;
+  intended for testing), ngrok, or a named Cloudflare tunnel (stable URL, needs an account).
+- **Authentication v1: secret URL token.** Nexus generates a random 256-bit token, keeps it in the
+  keyring, and serves MCP only at `/mcp/<token>`; any other path returns 404. This works with
+  ChatGPT's "no authentication" connector setting.
+  - Known weaknesses: the URL *is* the password. It can end up in tunnel logs, history and the
+    ChatGPT settings, and it does not expire.
+  - Mitigations: `nexus mcp token rotate`, constant-time comparison, rate limiting, audit log, and a
+    reduced remote tool set (read tier, local timer actions and PendingActions; no destructive
+    tools and no direct external writes).
+- **Authentication v2, only if needed:** an OAuth 2.1 resource server with short-lived scoped
+  tokens, once remote access can change mail or calendar data or more people use it.
+- **Kill switch:** stopping `nexus mcp serve` or rotating the token cuts access immediately.
 
 ## 12. Security model
 
@@ -320,12 +338,13 @@ A `SECURITY.md` with a private disclosure channel is required before the first p
 | 0 | Tracker: CLI, TUI, bar popup | **Done** |
 | 1 | Catalog (organization → client → project), edit and soft-delete entries, rename/merge projects, package-by-module refactor, file permissions | Existing data migrated with backup; TUI and CLI can fix any mistake |
 | 2 | Daemon, break countdown with notification actions, movement reminders, `nexus doctor` | A forgotten break produces a notification and a visible overdue state |
-| 3 | Public release: plugin repository, AUR package, i18n (`es`/`en`), `SECURITY.md`, CI | A new user installs both artifacts from the README alone |
-| 4 | Local MCP (stdio), read and local-write tiers, audit log | An AI client can start, stop and report timers |
+| 3 | Public release: plugin repository, AUR package, i18n (`es`/`en`), first-run tutorial, `SECURITY.md`, CI | A new user installs both artifacts from the README alone |
+| 4 | MCP: local stdio and `nexus mcp serve` behind a tunnel with a secret URL token; read and local-write tiers; audit log | ChatGPT (Plus) and a desktop agent can start, stop and report timers |
 | 5 | Read-only connectors: Calendar agenda, Notion tasks, Gmail unread, Obsidian; agenda in popup and TUI | Today's events and tasks visible without opening another window |
 | 6 | Write-back through outbox and PendingActions (move a Notion card, create an event) | Every external write is approved, audited and retried safely |
-| 7 | Remote MCP for ChatGPT web (opt-in, own threat model) | Threat model reviewed; remote can only read and propose |
+| 7 | OAuth for remote MCP, only if remote access must change mail or calendar data | Threat model reviewed; tokens short-lived and scoped |
 | 8 | Browser automation of the user's own sites (separate process) | Dry run and approval before any change |
+| Later | Sync between several computers | Not planned yet; the `uid` and event log keep the door open |
 
 ## 17. Decisions and open questions
 
@@ -338,13 +357,14 @@ A `SECURITY.md` with a private disclosure channel is required before the first p
 - D5. Local MCP over stdio first; remote MCP is opt-in and comes later.
 - D6. External writes and AI-requested actions require approval inside Nexus.
 - D7. The bar plugin is a thin client of the CLI JSON contract and lives in its own repository.
+- D8. Starting a break asks every time which running timers to stop.
+- D9. Remote MCP v1 uses a secret URL token behind a user-chosen tunnel (Cloudflare quick tunnel recommended); OAuth only when needed.
 
 **Open questions**
 
 - Q1. Final package and plugin names.
 - Q2. Idle signal source for movement reminders.
 - Q3. Whether OpenAI Secure MCP Tunnel can serve ChatGPT web for the user's plan.
-- Q4. Default for starting a break: stop all work timers, or ask each time.
 - Q5. Retention period for soft-deleted entries (proposal: 30 days).
 
 ## 18. Sources
