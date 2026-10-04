@@ -86,7 +86,7 @@ func run(args []string, tracker Tracker, catalog Catalog, stdout, stderr io.Writ
 	case "ls":
 		return runList(args, tracker, stdout)
 	case "projects":
-		return runProjects(args, tracker, stdout)
+		return runProjects(args, tracker, catalog, stdout)
 	case "report":
 		return runReport(args, tracker, stdout)
 	case "edit":

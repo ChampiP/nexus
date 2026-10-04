@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"nexus/internal/adapters/projectlist"
+	"nexus/internal/catalog"
 	"nexus/internal/tracking"
 )
 
@@ -189,7 +191,8 @@ func runList(args []string, tracker Tracker, stdout io.Writer) error {
 	return nil
 }
 
-func runProjects(args []string, tracker Tracker, stdout io.Writer) error {
+// runProjects lista los proyectos elegibles: catálogo no archivado combinado con el uso registrado.
+func runProjects(args []string, tracker Tracker, cat Catalog, stdout io.Writer) error {
 	fs := flag.NewFlagSet("projects", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	query := fs.String("q", "", "query")
@@ -201,11 +204,18 @@ func runProjects(args []string, tracker Tracker, stdout io.Writer) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("uso: nexus projects [--json] [-q consulta]")
 	}
-	projects := tracker.Projects(*query)
+	var tree []catalog.TreeOrganization
+	if cat != nil {
+		var err error
+		if tree, err = cat.Tree(); err != nil {
+			return err
+		}
+	}
+	projects := projectlist.Build(tree, tracker.Projects(""), *query)
 	if *jsonMode {
 		out := make([]projectOutput, 0, len(projects))
 		for _, project := range projects {
-			out = append(out, projectOutput{project.Name, project.LastUsed, project.Seconds})
+			out = append(out, projectOutput{project.Name, project.LastUsed, project.Seconds, project.Client, project.Organization})
 		}
 		return json.NewEncoder(stdout).Encode(out)
 	}

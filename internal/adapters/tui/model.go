@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"nexus/internal/catalog"
 	"nexus/internal/tracking"
 )
 
@@ -22,6 +23,7 @@ const (
 	focusWeek
 	focusRecent   // fila de recientes; el índice está en focusedRecent
 	focusUndo     // botón [Deshacer] de la barra de estado
+	focusTabs     // barra superior de pantallas; es el primer elemento del anillo
 	focusEditSave // botones del panel de edición
 	focusEditDelete
 	focusEditCancel
@@ -52,11 +54,20 @@ type Model struct {
 	now             time.Time
 	message         string
 	selectedProject string
+	catalog         Catalog
+	tree            []catalog.TreeOrganization
+	screen          screen
+	cat             catalogState
 }
 
 // NewModel creates a ready-to-type model backed by the application tracker.
-func NewModel(tracker Tracker) Model {
+func NewModel(tracker Tracker, options ...Option) Model {
 	m := Model{tracker: tracker, now: time.Now()}
+	for _, option := range options {
+		option(&m)
+	}
+	m.loadCatalog()
+	m.initCatalogInput()
 	m.initInputs()
 	m.inputs[0].Focus()
 	m.refresh()
@@ -75,6 +86,7 @@ func (m *Model) refresh() {
 		}
 	}
 	m.totals, _ = m.tracker.Report(rangeStart(m.now, m.week))
+	m.loadCatalog()
 	m.clampFocus()
 }
 
@@ -87,10 +99,18 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.refresh()
 		return m, tick()
 	case tea.MouseMsg:
-		return m.updateMouse(msg)
+		if m.screen == screenCatalog {
+			_, cmd := m.updateCatalogMouse(msg)
+			return m, cmd
+		}
+		_, cmd := m.updateMouse(msg)
+		return m, cmd
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
+		}
+		if m.screen == screenCatalog {
+			return m, m.updateCatalogKey(msg)
 		}
 		if msg.Type == tea.KeyCtrlZ && m.confirm == nil {
 			m.restoreLast()
@@ -119,6 +139,13 @@ func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
 	if m.confirm != nil {
 		m.updateConfirm(key)
 		return nil
+	}
+	if m.focus == focusTabs {
+		switch key.Type {
+		case tea.KeyLeft, tea.KeyRight, tea.KeyEnter:
+			m.switchScreen(screenCatalog)
+			return nil
+		}
 	}
 	if m.edit != nil && m.focus >= focusEditSave {
 		m.updateEditButtons(key)
@@ -257,7 +284,7 @@ func (m *Model) startTimer() {
 }
 
 func (m *Model) cycleProject(delta int) {
-	projects := m.tracker.Projects("")
+	projects := m.pickerProjects("")
 	choices := make([]string, 1, len(projects)+1)
 	for _, project := range projects {
 		choices = append(choices, project.Name)

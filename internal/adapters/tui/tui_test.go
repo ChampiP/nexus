@@ -21,6 +21,8 @@ type testStore struct {
 	deleted  []int64
 	restored []int64
 	editErr  error
+	totals   []tracking.ProjectTotal
+	counts   map[int64]int
 }
 
 type editCall struct {
@@ -121,7 +123,8 @@ func (s *testStore) Projects(query string) []tracking.ProjectUsage {
 	}
 	return matches
 }
-func (s *testStore) Report(time.Time) ([]tracking.ProjectTotal, error) { return nil, nil }
+func (s *testStore) Report(time.Time) ([]tracking.ProjectTotal, error) { return s.totals, nil }
+func (s *testStore) CountByProject(id int64) (int, error)              { return s.counts[id], nil }
 
 func TestEnterStartsFromTitleAndResetsForm(t *testing.T) {
 	db := &testStore{projects: []tracking.ProjectUsage{{Name: "Studio"}}}

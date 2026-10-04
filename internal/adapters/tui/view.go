@@ -16,9 +16,15 @@ func (m Model) View() string {
 	if m.width == 0 {
 		return "Iniciando Nexus…"
 	}
+	if m.screen == screenCatalog {
+		return m.catalogView()
+	}
 	layout := m.computeLayout()
 	lines := make([]string, layout.dashboardY)
 	lines[0] = titleStyle.Render("NEXUS") + label.Render(fmt.Sprintf("  ·  Hoy %s  ·  %s", formatDuration(m.todaySeconds), m.now.Format("02/01/2006")))
+	if len(layout.tabs) > 0 {
+		lines[0] = titleStyle.Render("NEXUS") + "  " + renderTabs(0, m.focus == focusTabs) + label.Render(fmt.Sprintf("  ·  Hoy %s  ·  %s", formatDuration(m.todaySeconds), m.now.Format("02/01/2006")))
+	}
 	lines[2] = label.Render("Título")
 	lines[3] = m.inputs[0].View()
 	lines[4] = label.Render("Proyecto")
@@ -113,6 +119,8 @@ func (m Model) hint() string {
 		return "↑↓ mover · Enter guardar · Esc cancelar · clic en un campo o botón"
 	}
 	switch m.focus {
+	case focusTabs:
+		return "←→ o Enter cambiar de pantalla · ↓ continuar · clic en una pestaña"
 	case focusTitle:
 		return "↑↓ mover · Enter iniciar · clic para seleccionar · Ctrl+C salir"
 	case focusProject:

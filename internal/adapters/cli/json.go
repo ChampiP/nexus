@@ -49,6 +49,9 @@ type projectOutput struct {
 	Name     string `json:"name"`
 	LastUsed int64  `json:"last_used"`
 	Seconds  int64  `json:"seconds"`
+	// Campos aditivos: se omiten cuando están vacíos para no alterar el contrato existente.
+	Client       string `json:"client,omitempty"`
+	Organization string `json:"organization,omitempty"`
 }
 type errorOutput struct {
 	Error string `json:"error"`

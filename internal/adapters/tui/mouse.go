@@ -57,6 +57,15 @@ func (m *Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if m.clickStatus(layout, msg.X, msg.Y) || m.confirm != nil {
 			return m, nil
 		}
+		if len(layout.tabs) > 0 && layout.tabs[1].contains(msg.X, msg.Y) {
+			m.switchScreen(screenCatalog)
+			return m, nil
+		}
+		if len(layout.tabs) > 0 && layout.tabs[0].contains(msg.X, msg.Y) {
+			m.focus = focusTabs
+			m.closeProjectPicker()
+			return m, nil
+		}
 		for i, zone := range layout.fields {
 			if zone.contains(msg.X, msg.Y) {
 				m.focus = focusTarget(i)

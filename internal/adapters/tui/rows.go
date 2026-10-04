@@ -30,7 +30,11 @@ func (m Model) focusRing() []focusStop {
 	if m.edit != nil {
 		return []focusStop{{focusTitle, 0}, {focusProject, 0}, {focusDescription, 0}, {focusEditSave, 0}, {focusEditDelete, 0}, {focusEditCancel, 0}}
 	}
-	stops := []focusStop{{focusTitle, 0}, {focusProject, 0}, {focusDescription, 0}, {focusStart, 0}}
+	var stops []focusStop
+	if m.catalogEnabled() {
+		stops = append(stops, focusStop{focusTabs, 0})
+	}
+	stops = append(stops, focusStop{focusTitle, 0}, focusStop{focusProject, 0}, focusStop{focusDescription, 0}, focusStop{focusStart, 0})
 	for i := range m.running {
 		stops = append(stops, focusStop{focusRunningStart, i})
 	}

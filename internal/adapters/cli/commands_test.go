@@ -329,3 +329,41 @@ func TestCatalogUnavailable(t *testing.T) {
 	_, err := invoke(t, testTracker(t), "tree")
 	wantErr(t, err, "el catálogo no está disponible")
 }
+
+func TestProjectsMergesCatalogAndKeepsJSONContract(t *testing.T) {
+	a := newApp(t)
+	a.mustRun(t, "org", "add", "Holinsys")
+	a.mustRun(t, "client", "add", "Depilab", "-o", "Holinsys")
+	a.mustRun(t, "project", "add", "Depiloto", "-c", "Depilab")
+	a.mustRun(t, "project", "add", "Lumirecon", "-c", "Depilab")
+	a.mustRun(t, "project", "add", "Viejo")
+	a.mustRun(t, "project", "archive", "Viejo")
+	a.mustRun(t, "start", "Informe", "-p", "Depiloto")
+	a.mustRun(t, "start", "Suelta", "-p", "Texto libre")
+	wantOut(t, a.mustRun(t, "projects"), "Depiloto\nTexto libre\nLumirecon\n")
+	wantOut(t, a.mustRun(t, "projects", "-q", "depilab"), "Depiloto\nLumirecon\n")
+	var projects []map[string]any
+	if err := json.Unmarshal([]byte(a.mustRun(t, "projects", "--json")), &projects); err != nil || len(projects) != 3 {
+		t.Fatalf("projects JSON: %v %v", projects, err)
+	}
+	first := projects[0]
+	if first["name"] != "Depiloto" || first["client"] != "Depilab" || first["organization"] != "Holinsys" {
+		t.Fatalf("campos aditivos = %#v", first)
+	}
+	if _, ok := first["last_used"]; !ok {
+		t.Fatalf("falta last_used: %#v", first)
+	}
+	if _, ok := first["seconds"]; !ok {
+		t.Fatalf("falta seconds: %#v", first)
+	}
+	for _, p := range projects {
+		if p["name"] == "Texto libre" {
+			if _, ok := p["client"]; ok {
+				t.Fatalf("client debe omitirse cuando está vacío: %#v", p)
+			}
+			if _, ok := p["organization"]; ok {
+				t.Fatalf("organization debe omitirse cuando está vacío: %#v", p)
+			}
+		}
+	}
+}

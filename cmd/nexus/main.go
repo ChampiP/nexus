@@ -35,7 +35,7 @@ func run(args []string) error {
 	}
 	defer closeDB()
 	if len(args) == 0 {
-		return tui.Run(tracker)
+		return tui.Run(tracker, catalogService)
 	}
 	return cli.RunWithCatalog(args, tracker, catalogService, os.Stdout, os.Stderr)
 }

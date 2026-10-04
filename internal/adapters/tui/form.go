@@ -1,14 +1,18 @@
 package tui
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/lipgloss"
+	"nexus/internal/adapters/projectlist"
+	"nexus/internal/tracking"
 )
 
 type projectOption struct {
 	name    string
+	client  string
 	seconds int64
 	create  bool
 	current bool
@@ -22,11 +26,20 @@ func (m *Model) initInputs() {
 		input.Width = 42
 		m.inputs = append(m.inputs, input)
 	}
-	projects := m.tracker.Projects("")
-	if len(projects) > 0 {
-		m.selectedProject = projects[0].Name
-		m.inputs[1].SetValue(m.selectedProject)
+	// El proyecto inicial es el último usado (no archivado), no uno del catálogo sin tareas.
+	used := m.tracker.Projects("")
+	for _, project := range m.pickerProjects("") {
+		if slices.ContainsFunc(used, func(u tracking.ProjectUsage) bool { return strings.EqualFold(u.Name, project.Name) }) {
+			m.selectedProject = project.Name
+			m.inputs[1].SetValue(m.selectedProject)
+			break
+		}
 	}
+}
+
+// pickerProjects une el catálogo con el uso registrado; es la misma lista que muestra la CLI.
+func (m Model) pickerProjects(query string) []projectlist.Option {
+	return projectlist.Build(m.tree, m.tracker.Projects(""), query)
 }
 
 func (m Model) projectOptions() []projectOption {
@@ -34,11 +47,11 @@ func (m Model) projectOptions() []projectOption {
 	if m.focus == focusProject && m.pickerOpen {
 		query = strings.TrimSpace(m.inputs[1].Value())
 	}
-	projects := m.tracker.Projects(query)
+	projects := m.pickerProjects(query)
 	options := make([]projectOption, 0, len(projects)+1)
 	exact := false
 	for _, project := range projects {
-		options = append(options, projectOption{name: project.Name, seconds: project.Seconds, current: strings.EqualFold(project.Name, m.selectedProject)})
+		options = append(options, projectOption{name: project.Name, client: project.Client, seconds: project.Seconds, current: strings.EqualFold(project.Name, m.selectedProject)})
 		if strings.EqualFold(strings.TrimSpace(project.Name), query) {
 			exact = true
 		}
@@ -118,7 +131,11 @@ func projectOptionLabel(option projectOption) string {
 	if option.name == "Sin proyecto" {
 		return option.name
 	}
-	return option.name + "  ·  " + formatDuration(option.seconds)
+	name := option.name
+	if option.client != "" {
+		name += " · " + option.client
+	}
+	return name + "  ·  " + formatDuration(option.seconds)
 }
 
 func renderProjectOption(option projectOption, selected bool) string {

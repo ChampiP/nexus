@@ -1,6 +1,10 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"strings"
+
+	"github.com/charmbracelet/lipgloss"
+)
 
 type rect struct{ x, y, w, h int }
 
@@ -13,6 +17,7 @@ type rowZones struct {
 }
 
 type screenLayout struct {
+	tabs                                              []rect
 	fields                                            [3]rect
 	start                                             rect
 	editButtons                                       []rect
@@ -73,6 +78,9 @@ func (m Model) computeLayout() screenLayout {
 		width = 80
 	}
 	l := screenLayout{}
+	if m.catalogEnabled() && m.edit == nil {
+		l.tabs = tabRects()
+	}
 	l.fields[0] = rect{0, 3, width, 1}
 	l.fields[1] = rect{0, 5, width, 1}
 	y := 6
@@ -150,4 +158,46 @@ func (l *screenLayout) fillDashboard(m Model, width int) {
 	if text, labels := m.statusBar(); len(labels) > 0 {
 		l.statusButtons = buttonRects(l.statusY, lipgloss.Width(text), labels)
 	}
+}
+
+// Pantallas de la barra superior; el orden define su índice.
+var tabLabels = []string{"Temporizadores", "Catálogo"}
+
+// tabsX es la columna donde empiezan las pestañas, tras «NEXUS  ».
+const tabsX = 7
+
+// tabText es el texto de una pestaña; la activa lleva corchetes y ambas miden lo mismo.
+func tabText(index int, active bool) string {
+	if active {
+		return "[" + tabLabels[index] + "]"
+	}
+	return " " + tabLabels[index] + " "
+}
+
+// tabRects calcula la zona de cada pestaña; es común a ambas pantallas.
+func tabRects() []rect {
+	zones := make([]rect, len(tabLabels))
+	x := tabsX
+	for i := range tabLabels {
+		w := lipgloss.Width(tabText(i, false))
+		zones[i] = rect{x, 0, w, 1}
+		x += w + 1
+	}
+	return zones
+}
+
+// renderTabs dibuja la barra de pestañas; el foco usa video inverso, no solo color.
+func renderTabs(active int, focused bool) string {
+	parts := make([]string, len(tabLabels))
+	for i := range tabLabels {
+		style := lipgloss.NewStyle().Foreground(muted)
+		if i == active {
+			style = lipgloss.NewStyle().Bold(true).Foreground(accent)
+			if focused {
+				style = style.Reverse(true)
+			}
+		}
+		parts[i] = style.Render(tabText(i, i == active))
+	}
+	return strings.Join(parts, " ")
 }
