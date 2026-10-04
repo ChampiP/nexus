@@ -7,10 +7,14 @@ type Repository interface {
 	Insert(Entry) (Entry, error)
 	Stop(id, endedAt int64) error
 	StopAll(endedAt int64) (int, error)
+	// Running devuelve solo los timers de trabajo en curso; los breaks quedan fuera.
 	Running() ([]Entry, error)
 	Recent(limit int) ([]Entry, error)
+	// Totals y Projects cuentan solo entradas de trabajo.
 	Totals(since, now int64) ([]ProjectTotal, error)
 	Projects(now int64) ([]ProjectUsage, error)
+	// BreakSeconds suma la duración de los breaks desde since, recortada en now.
+	BreakSeconds(since, now int64) (int64, error)
 	Get(id int64) (Entry, error)
 	Update(Entry) error
 	SoftDelete(id, at int64) error

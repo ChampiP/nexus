@@ -1,6 +1,7 @@
 package tracking
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,6 +13,7 @@ type StartInput struct {
 	Title       string
 	Project     string
 	Description string
+	Kind        string // "" equivale a "work"
 }
 
 // Tracker implements timer use cases.
@@ -59,15 +61,66 @@ func (t *Tracker) Start(input StartInput) (Entry, error) {
 	if input.Title == "" {
 		return Entry{}, ErrEmptyTitle
 	}
+	switch input.Kind {
+	case "":
+		input.Kind = KindWork
+	case KindWork, KindBreak:
+	default:
+		return Entry{}, ErrInvalidKind
+	}
 	projectID, err := t.resolve(input.Project)
 	if err != nil {
 		return Entry{}, fmt.Errorf("start timer: %w", err)
 	}
-	entry, err := t.repository.Insert(Entry{Title: input.Title, Project: input.Project, ProjectID: projectID, Description: input.Description, StartedAt: t.clock().Unix()})
+	entry, err := t.repository.Insert(Entry{Kind: input.Kind, Title: input.Title, Project: input.Project, ProjectID: projectID, Description: input.Description, StartedAt: t.clock().Unix()})
 	if err != nil {
 		return Entry{}, fmt.Errorf("start timer: %w", err)
 	}
 	return entry, nil
+}
+
+// StartLike inicia una entrada de trabajo NUEVA con el título, proyecto y descripción de la entrada id.
+func (t *Tracker) StartLike(id int64) (Entry, error) {
+	src, err := t.repository.Get(id)
+	if err != nil {
+		return Entry{}, fmt.Errorf("start like entry #%d: %w", id, err)
+	}
+	entry, err := t.repository.Insert(Entry{Kind: KindWork, Title: src.Title, Project: src.Project, ProjectID: src.ProjectID, Description: src.Description, StartedAt: t.clock().Unix()})
+	if err != nil {
+		return Entry{}, fmt.Errorf("start like entry #%d: %w", id, err)
+	}
+	return entry, nil
+}
+
+// BreakSeconds devuelve el tiempo total de break desde since; un break en curso cuenta hasta ahora.
+func (t *Tracker) BreakSeconds(since time.Time) (int64, error) {
+	n, err := t.repository.BreakSeconds(since.Unix(), t.clock().Unix())
+	if err != nil {
+		return 0, fmt.Errorf("calculate break time: %w", err)
+	}
+	return n, nil
+}
+
+// IsRunning indica si la entrada id existe y sigue en curso (sea trabajo o break).
+func (t *Tracker) IsRunning(id int64) (bool, error) {
+	entry, err := t.repository.Get(id)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("get entry #%d: %w", id, err)
+	}
+	return entry.EndedAt == nil, nil
+}
+
+// StopMany detiene los timers indicados; ignora los que ya estaban detenidos.
+func (t *Tracker) StopMany(ids []int64) error {
+	for _, id := range ids {
+		if err := t.Stop(id); err != nil && !errors.Is(err, ErrNotRunning) {
+			return err
+		}
+	}
+	return nil
 }
 
 // EditInput holds the optional changes for Edit; nil fields are left untouched.

@@ -13,12 +13,13 @@ import (
 )
 
 const (
-	tracking = "nexus/internal/tracking"
-	catalog  = "nexus/internal/catalog"
-	platform = "nexus/internal/platform"
-	adapters = "nexus/internal/adapters"
-	cliPkg   = "nexus/internal/adapters/cli"
-	tuiPkg   = "nexus/internal/adapters/tui"
+	tracking  = "nexus/internal/tracking"
+	catalog   = "nexus/internal/catalog"
+	countdown = "nexus/internal/countdown"
+	platform  = "nexus/internal/platform"
+	adapters  = "nexus/internal/adapters"
+	cliPkg    = "nexus/internal/adapters/cli"
+	tuiPkg    = "nexus/internal/adapters/tui"
 	// projectListPkg es compartido por los adaptadores; solo puede depender de tracking y catalog.
 	projectListPkg = "nexus/internal/adapters/projectlist"
 )
@@ -57,6 +58,10 @@ func TestModuleBoundaries(t *testing.T) {
 			case within(p.ImportPath, tracking) && within(imp, adapters):
 				t.Errorf("%s must not import adapter %s", p.ImportPath, imp)
 			case within(p.ImportPath, tracking) && within(imp, catalog), within(p.ImportPath, catalog) && within(imp, tracking):
+				t.Errorf("%s must not import %s", p.ImportPath, imp)
+			case within(p.ImportPath, countdown) && (within(imp, tracking) || within(imp, catalog) || within(imp, adapters)):
+				t.Errorf("%s must not import %s", p.ImportPath, imp)
+			case (within(p.ImportPath, tracking) || within(p.ImportPath, catalog)) && within(imp, countdown):
 				t.Errorf("%s must not import %s", p.ImportPath, imp)
 			case within(p.ImportPath, catalog) && within(imp, adapters):
 				t.Errorf("%s must not import adapter %s", p.ImportPath, imp)

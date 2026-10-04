@@ -43,4 +43,6 @@ var (
 	ErrNotFound = errors.New("entry not found")
 	// ErrEmptyTitle indicates that a timer title is blank after trimming.
 	ErrEmptyTitle = errors.New("title cannot be empty")
+	// ErrInvalidKind indica que el tipo de entrada no es "work" ni "break".
+	ErrInvalidKind = errors.New("invalid entry kind")
 )

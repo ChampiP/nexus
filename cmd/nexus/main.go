@@ -10,6 +10,7 @@ import (
 	"nexus/internal/adapters/cli"
 	"nexus/internal/adapters/tui"
 	"nexus/internal/catalog"
+	"nexus/internal/countdown"
 	platformdb "nexus/internal/platform/db"
 	"nexus/internal/tracking"
 )
@@ -26,7 +27,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	tracker, catalogService, closeDB, err := openApp(path)
+	tracker, catalogService, _, closeDB, err := openApp(path)
 	if err != nil {
 		if len(args) > 0 && args[0] == "status" && hasJSONFlag(args[1:]) {
 			return cli.Run(args, nil, os.Stdout, os.Stderr)
@@ -40,11 +41,11 @@ func run(args []string) error {
 	return cli.RunWithCatalog(args, tracker, catalogService, os.Stdout, os.Stderr)
 }
 
-// openApp abre y migra la base de datos en path y construye los casos de uso de seguimiento y catálogo.
-func openApp(path string) (*tracking.Tracker, *catalog.Service, func() error, error) {
+// openApp abre y migra la base de datos en path y construye los casos de uso de seguimiento, catálogo y break.
+func openApp(path string) (*tracking.Tracker, *catalog.Service, *countdown.Service, func() error, error) {
 	db, err := platformdb.Open(path)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	_, backup, err := migrateAndReconcile(db, path, time.Now)
 	if backup != "" {
@@ -52,24 +53,44 @@ func openApp(path string) (*tracking.Tracker, *catalog.Service, func() error, er
 	}
 	if err != nil {
 		db.Close()
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
-	tracker, catalogService := wire(db, time.Now)
+	tracker, catalogService, breaks := wire(db, time.Now)
 	if _, err := tracker.Purge(trashRetention); err != nil {
 		fmt.Fprintln(os.Stderr, "nexus: no se pudo purgar la papelera:", err)
 	}
-	return tracker, catalogService, db.Close, nil
+	return tracker, catalogService, breaks, db.Close, nil
 }
 
 // trashRetention is how long soft-deleted entries stay restorable.
 const trashRetention = 30 * 24 * time.Hour
 
 // wire builds the module use cases over a migrated database and connects them through their ports.
-func wire(db *sql.DB, now func() time.Time) (*tracking.Tracker, *catalog.Service) {
+func wire(db *sql.DB, now func() time.Time) (*tracking.Tracker, *catalog.Service, *countdown.Service) {
 	catalogRepo := catalog.NewSQLite(db)
 	tracker := tracking.NewTracker(tracking.NewSQLite(db), now, tracking.WithProjects(catalogProjects{catalogRepo}))
-	return tracker, catalog.NewService(catalogRepo, trackerEntries{tracker}, now)
+	breaks := countdown.NewService(countdown.NewSQLite(db), trackerTimers{tracker}, now)
+	return tracker, catalog.NewService(catalogRepo, trackerEntries{tracker}, now), breaks
 }
+
+// trackerTimers adapts tracking to the port countdown uses to control timers.
+type trackerTimers struct{ tracker *tracking.Tracker }
+
+func (t trackerTimers) StopMany(ids []int64) error { return t.tracker.StopMany(ids) }
+
+func (t trackerTimers) StartBreak(label string) (int64, error) {
+	entry, err := t.tracker.Start(tracking.StartInput{Title: label, Kind: tracking.KindBreak})
+	return entry.ID, err
+}
+
+func (t trackerTimers) Stop(id int64) error { return t.tracker.Stop(id) }
+
+func (t trackerTimers) StartLike(id int64) error {
+	_, err := t.tracker.StartLike(id)
+	return err
+}
+
+func (t trackerTimers) Running(id int64) (bool, error) { return t.tracker.IsRunning(id) }
 
 // trackerEntries adapts tracking to the port catalog uses to keep entries' project columns in sync.
 type trackerEntries struct{ tracker *tracking.Tracker }
@@ -96,6 +117,7 @@ func migrateAndReconcile(db *sql.DB, path string, now func() time.Time) (int, st
 	trackingSteps := tracking.Migrations()
 	migrations := append([]platformdb.Migration{trackingSteps[0]}, catalog.Migrations()...)
 	migrations = append(migrations, trackingSteps[1:]...)
+	migrations = append(migrations, countdown.Migrations()...)
 	applied, backup, err := platformdb.Migrate(db, path, migrations, now)
 	if err != nil {
 		return applied, backup, err

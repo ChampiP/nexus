@@ -71,7 +71,7 @@ func TestFreshDatabase(t *testing.T) {
 	}
 	defer db.Close()
 	applied, backup := upgrade(t, db, path)
-	if applied != 3 || backup != "" {
+	if applied != 4 || backup != "" {
 		t.Fatalf("applied = %d, backup = %q", applied, backup)
 	}
 	for file, want := range map[string]os.FileMode{filepath.Dir(path): 0o700, path: 0o600} {
@@ -85,7 +85,7 @@ func TestFreshDatabase(t *testing.T) {
 func TestLegacyDatabaseIsAdoptedWithoutLosingData(t *testing.T) {
 	db, path := legacyDB(t)
 	applied, backup := upgrade(t, db, path)
-	if applied != 3 || backup == "" {
+	if applied != 4 || backup == "" {
 		t.Fatalf("applied = %d, backup = %q", applied, backup)
 	}
 	old, err := sql.Open("sqlite", backup)
@@ -197,7 +197,7 @@ func wiredServices(t *testing.T, now *int64) (*tracking.Tracker, *catalog.Servic
 	t.Helper()
 	db, path := legacyDB(t)
 	upgrade(t, db, path)
-	tracker, service := wire(db, func() time.Time { return time.Unix(*now, 0) })
+	tracker, service, _ := wire(db, func() time.Time { return time.Unix(*now, 0) })
 	return tracker, service, db
 }
 
@@ -262,5 +262,33 @@ func TestRenameProjectUpdatesEntriesAndNewEntriesLink(t *testing.T) {
 	}
 	if n := count(t, db, `SELECT COUNT(*) FROM entries WHERE id = `+strconv.FormatInt(entry.ID, 10)+` AND project_id = `+strconv.FormatInt(id, 10)); n != 1 {
 		t.Fatal("new entry not linked to existing project")
+	}
+}
+
+func TestBreakFlowThroughWiredAdapter(t *testing.T) {
+	now := int64(1000)
+	tracker, _, db := wiredServices(t, &now)
+	_, _, breaks := wire(db, func() time.Time { return time.Unix(now, 0) })
+	running, _, _, err := tracker.Snapshot()
+	if err != nil || len(running) == 0 {
+		t.Fatalf("running = %+v, %v", running, err)
+	}
+	ids := []int64{running[0].ID}
+	if _, err := breaks.StartBreak(10*time.Minute, "", ids); err != nil {
+		t.Fatal(err)
+	}
+	if after, _, _, _ := tracker.Snapshot(); len(after) != len(running)-1 {
+		t.Fatalf("work timers after break = %+v", after)
+	}
+	now = 1100
+	if n, err := breaks.End(true); err != nil || n != 1 {
+		t.Fatalf("End = %d, %v", n, err)
+	}
+	after, _, _, _ := tracker.Snapshot()
+	if len(after) != len(running) || after[len(after)-1].ID == ids[0] {
+		t.Fatalf("resumed running = %+v", after)
+	}
+	if secs, _ := tracker.BreakSeconds(time.Unix(0, 0)); secs != 100 {
+		t.Fatalf("BreakSeconds = %d", secs)
 	}
 }

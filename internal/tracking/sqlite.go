@@ -167,7 +167,7 @@ func (s *SQLite) StopAll(endedAt int64) (int, error) {
 
 // Running returns active timers in start order.
 func (s *SQLite) Running() ([]Entry, error) {
-	return s.queryEntries(`SELECT ` + entryColumns + ` FROM entries WHERE deleted_at IS NULL AND ended_at IS NULL ORDER BY started_at, id`)
+	return s.queryEntries(`SELECT ` + entryColumns + ` FROM entries WHERE deleted_at IS NULL AND ended_at IS NULL AND kind = 'work' ORDER BY started_at, id`)
 }
 
 // Recent returns the most recently started entries, newest first.
@@ -180,7 +180,7 @@ func (s *SQLite) Recent(limit int) ([]Entry, error) {
 
 // Totals returns project durations since the timestamp, clipped at now.
 func (s *SQLite) Totals(since, now int64) ([]ProjectTotal, error) {
-	rows, err := s.db.Query(`SELECT project, started_at, ended_at FROM entries WHERE deleted_at IS NULL AND started_at < ?`, now)
+	rows, err := s.db.Query(`SELECT project, started_at, ended_at FROM entries WHERE deleted_at IS NULL AND kind = 'work' AND started_at < ?`, now)
 	if err != nil {
 		return nil, fmt.Errorf("query totals: %w", err)
 	}
@@ -217,7 +217,7 @@ func (s *SQLite) Totals(since, now int64) ([]ProjectTotal, error) {
 
 // Projects returns per-project last-use times and accumulated durations.
 func (s *SQLite) Projects(now int64) ([]ProjectUsage, error) {
-	rows, err := s.db.Query(`SELECT project, MAX(started_at), SUM(MAX(0, MIN(COALESCE(ended_at, ?), ?) - started_at)) FROM entries WHERE deleted_at IS NULL AND project <> '' AND started_at <= ? GROUP BY project`, now, now, now)
+	rows, err := s.db.Query(`SELECT project, MAX(started_at), SUM(MAX(0, MIN(COALESCE(ended_at, ?), ?) - started_at)) FROM entries WHERE deleted_at IS NULL AND kind = 'work' AND project <> '' AND started_at <= ? GROUP BY project`, now, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("query projects: %w", err)
 	}
@@ -234,6 +234,16 @@ func (s *SQLite) Projects(now int64) ([]ProjectUsage, error) {
 		return nil, fmt.Errorf("iterate projects: %w", err)
 	}
 	return projects, nil
+}
+
+// BreakSeconds suma los intervalos de break solapados con [since, now].
+func (s *SQLite) BreakSeconds(since, now int64) (int64, error) {
+	var total int64
+	err := s.db.QueryRow(`SELECT COALESCE(SUM(MAX(0, MIN(COALESCE(ended_at, ?), ?) - MAX(started_at, ?))), 0) FROM entries WHERE deleted_at IS NULL AND kind = 'break'`, now, now, since).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("query break seconds: %w", err)
+	}
+	return total, nil
 }
 
 const entryColumns = `id, COALESCE(uid, ''), kind, title, description, project, COALESCE(project_id, 0), started_at, ended_at, deleted_at`
