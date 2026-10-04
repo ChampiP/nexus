@@ -15,6 +15,8 @@ type Repository interface {
 	Projects(now int64) ([]ProjectUsage, error)
 	// BreakSeconds suma la duración de los breaks desde since, recortada en now.
 	BreakSeconds(since, now int64) (int64, error)
+	// BreaksSince devuelve los breaks no eliminados iniciados desde since, en orden de inicio.
+	BreaksSince(since int64) ([]Entry, error)
 	Get(id int64) (Entry, error)
 	Update(Entry) error
 	SoftDelete(id, at int64) error

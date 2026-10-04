@@ -19,6 +19,8 @@ type Tracker interface {
 	Projects(string) []tracking.ProjectUsage
 	Report(time.Time) ([]tracking.ProjectTotal, error)
 	CountByProject(int64) (int, error)
+	BreaksSince(time.Time) ([]tracking.Entry, error)
+	Get(int64) (tracking.Entry, error)
 }
 
 // Catalog es la frontera mínima del catálogo que necesita la pantalla de catálogo.
@@ -49,8 +51,8 @@ func WithCatalog(c Catalog) Option { return func(m *Model) { m.catalog = c } }
 type tickMsg time.Time
 
 // Run starts the interactive terminal interface.
-func Run(tracker Tracker, catalog Catalog) error {
-	_, err := tea.NewProgram(NewModel(tracker, WithCatalog(catalog)), tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
+func Run(tracker Tracker, catalog Catalog, breaks Breaks) error {
+	_, err := tea.NewProgram(NewModel(tracker, WithCatalog(catalog), WithBreaks(breaks)), tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	return err
 }
 

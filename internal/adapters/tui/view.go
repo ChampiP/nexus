@@ -19,11 +19,18 @@ func (m Model) View() string {
 	if m.screen == screenCatalog {
 		return m.catalogView()
 	}
+	if m.screen == screenBreak {
+		return m.breakView()
+	}
 	layout := m.computeLayout()
 	lines := make([]string, layout.dashboardY)
-	lines[0] = titleStyle.Render("NEXUS") + label.Render(fmt.Sprintf("  ·  Hoy %s  ·  %s", formatDuration(m.todaySeconds), m.now.Format("02/01/2006")))
-	if len(layout.tabs) > 0 {
-		lines[0] = titleStyle.Render("NEXUS") + "  " + renderTabs(0, m.focus == focusTabs) + label.Render(fmt.Sprintf("  ·  Hoy %s  ·  %s", formatDuration(m.todaySeconds), m.now.Format("02/01/2006")))
+	lines[0] = m.headerBase(len(layout.tabs) > 0)
+	if m.indicatorVisible() {
+		color := accent
+		if breakOverdue(*m.brk, m.now) {
+			color = urgent
+		}
+		lines[0] += "  " + lipgloss.NewStyle().Bold(true).Foreground(color).Render(indicatorText(*m.brk, m.now))
 	}
 	lines[2] = label.Render("Título")
 	lines[3] = m.inputs[0].View()
@@ -53,11 +60,7 @@ func (m Model) View() string {
 		lines[1] = titleStyle.Render(m.editTitle())
 		lines[layout.startY] = m.editButtonsLine()
 	} else {
-		button := "[ Iniciar ]"
-		if m.focus == focusStart {
-			button = "▸ " + button
-		}
-		lines[layout.startY] = lipgloss.NewStyle().Foreground(accent).Bold(true).Render(button)
+		lines[layout.startY] = startLine(m.focus == focusStart)
 	}
 	lines[layout.runningY] = titleStyle.Render("EN CURSO")
 	for i, row := range layout.running {
@@ -109,6 +112,24 @@ func (m Model) View() string {
 		footer = line + "\n" + footer
 	}
 	return strings.Join(lines, "\n") + "\n\n" + label.Render(footer)
+}
+
+// startLine dibuja [ Iniciar ] en la fila del formulario.
+func startLine(focused bool) string {
+	mark := "  "
+	if focused {
+		mark = "▸ "
+	}
+	return lipgloss.NewStyle().Foreground(accent).Bold(true).Render(mark + "[ Iniciar ]")
+}
+
+// headerBase es la línea del encabezado sin el indicador de break: título, pestañas y resumen de hoy.
+func (m Model) headerBase(tabs bool) string {
+	stats := label.Render(fmt.Sprintf("  ·  Hoy %s  ·  %s", formatDuration(m.todaySeconds), m.now.Format("02/01/2006")))
+	if tabs {
+		return titleStyle.Render("NEXUS") + "  " + renderTabs(m.screens(), screenTimers, m.focus == focusTabs) + stats
+	}
+	return titleStyle.Render("NEXUS") + stats
 }
 
 func (m Model) hint() string {

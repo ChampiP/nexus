@@ -13,7 +13,7 @@ func (m Model) catalogView() string {
 	c := m.cat
 	width := m.width
 	lines := make([]string, l.modalY)
-	lines[0] = titleStyle.Render("NEXUS") + "  " + renderTabs(1, c.focus == catFocusTabs)
+	lines[0] = titleStyle.Render("NEXUS") + "  " + renderTabs(m.screens(), screenCatalog, c.focus == catFocusTabs)
 	heading := "ORGANIZACIÓN › CLIENTE › PROYECTO"
 	if l.visible < len(c.rows) {
 		heading += fmt.Sprintf("  ·  filas %d-%d de %d", l.first+1, l.first+l.visible, len(c.rows))

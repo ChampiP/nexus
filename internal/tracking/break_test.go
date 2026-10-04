@@ -156,3 +156,65 @@ func TestIsRunning(t *testing.T) {
 		t.Fatalf("missing entry = %v, %v", ok, err)
 	}
 }
+
+func TestBreaksSinceReturnsOnlyLiveBreaksFromThatTime(t *testing.T) {
+	now := int64(1000)
+	tracker := newBreakTracker(t, &now)
+	if _, err := tracker.Start(StartInput{Title: "work"}); err != nil {
+		t.Fatal(err)
+	}
+	old, err := tracker.Start(StartInput{Title: "Viejo", Kind: KindBreak})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = 1100
+	if err := tracker.Stop(old.ID); err != nil {
+		t.Fatal(err)
+	}
+	now = 2000
+	first, err := tracker.Start(StartInput{Title: "Uno", Kind: KindBreak})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = 2100
+	if err := tracker.Stop(first.ID); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := tracker.Start(StartInput{Title: "Borrado", Kind: KindBreak})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tracker.Delete(deleted.ID); err != nil {
+		t.Fatal(err)
+	}
+	now = 2200
+	second, err := tracker.Start(StartInput{Title: "Dos", Kind: KindBreak})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := tracker.BreaksSince(time.Unix(1500, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].ID != first.ID || got[1].ID != second.ID {
+		t.Fatalf("BreaksSince = %+v, want [Uno Dos] en orden de inicio", got)
+	}
+	if got[0].EndedAt == nil || got[1].EndedAt != nil {
+		t.Fatalf("EndedAt = %v / %v", got[0].EndedAt, got[1].EndedAt)
+	}
+}
+
+func TestGetReturnsEntryOrNotFound(t *testing.T) {
+	now := int64(1000)
+	tracker := newBreakTracker(t, &now)
+	entry, err := tracker.Start(StartInput{Title: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := tracker.Get(entry.ID); err != nil || got.Title != "work" {
+		t.Fatalf("Get = %+v, %v", got, err)
+	}
+	if _, err := tracker.Get(999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get inexistente = %v", err)
+	}
+}

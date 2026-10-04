@@ -6,6 +6,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// startWidth es el ancho de «▸ [ Iniciar ]».
+const startWidth = 13
+
 type rect struct{ x, y, w, h int }
 
 func (r rect) contains(x, y int) bool { return x >= r.x && x < r.x+r.w && y >= r.y && y < r.y+r.h }
@@ -21,6 +24,7 @@ type screenLayout struct {
 	fields                                            [3]rect
 	start                                             rect
 	editButtons                                       []rect
+	breakIndicator                                    rect
 	running                                           []rowZones
 	recent                                            []rowZones
 	options                                           []rect
@@ -78,9 +82,10 @@ func (m Model) computeLayout() screenLayout {
 		width = 80
 	}
 	l := screenLayout{}
-	if m.catalogEnabled() && m.edit == nil {
-		l.tabs = tabRects()
+	if m.tabsVisible() && m.edit == nil {
+		l.tabs = tabRects(m.screens())
 	}
+	l.fillBreakIndicator(m)
 	l.fields[0] = rect{0, 3, width, 1}
 	l.fields[1] = rect{0, 5, width, 1}
 	y := 6
@@ -113,7 +118,7 @@ func (m Model) computeLayout() screenLayout {
 		// El panel de edición ocupa el lugar del botón Iniciar.
 		l.editButtons = buttonRects(l.startY, 0, editLabels)
 	} else {
-		l.start = rect{0, l.startY, width, 1}
+		l.start = rect{0, l.startY, startWidth, 1}
 	}
 	l.runningY = l.startY + 2
 	visible := len(m.running) - m.runScroll
@@ -160,26 +165,26 @@ func (l *screenLayout) fillDashboard(m Model, width int) {
 	}
 }
 
-// Pantallas de la barra superior; el orden define su índice.
-var tabLabels = []string{"Temporizadores", "Catálogo"}
+// Etiquetas de las pestañas, indexadas por screen.
+var tabLabels = []string{"Temporizadores", "Break", "Catálogo"}
 
 // tabsX es la columna donde empiezan las pestañas, tras «NEXUS  ».
 const tabsX = 7
 
 // tabText es el texto de una pestaña; la activa lleva corchetes y ambas miden lo mismo.
-func tabText(index int, active bool) string {
+func tabText(s screen, active bool) string {
 	if active {
-		return "[" + tabLabels[index] + "]"
+		return "[" + tabLabels[s] + "]"
 	}
-	return " " + tabLabels[index] + " "
+	return " " + tabLabels[s] + " "
 }
 
-// tabRects calcula la zona de cada pestaña; es común a ambas pantallas.
-func tabRects() []rect {
-	zones := make([]rect, len(tabLabels))
+// tabRects calcula la zona de cada pestaña de screens, en el mismo orden; es común a todas las pantallas.
+func tabRects(screens []screen) []rect {
+	zones := make([]rect, len(screens))
 	x := tabsX
-	for i := range tabLabels {
-		w := lipgloss.Width(tabText(i, false))
+	for i, s := range screens {
+		w := lipgloss.Width(tabText(s, false))
 		zones[i] = rect{x, 0, w, 1}
 		x += w + 1
 	}
@@ -187,17 +192,17 @@ func tabRects() []rect {
 }
 
 // renderTabs dibuja la barra de pestañas; el foco usa video inverso, no solo color.
-func renderTabs(active int, focused bool) string {
-	parts := make([]string, len(tabLabels))
-	for i := range tabLabels {
+func renderTabs(screens []screen, active screen, focused bool) string {
+	parts := make([]string, len(screens))
+	for i, s := range screens {
 		style := lipgloss.NewStyle().Foreground(muted)
-		if i == active {
+		if s == active {
 			style = lipgloss.NewStyle().Bold(true).Foreground(accent)
 			if focused {
 				style = style.Reverse(true)
 			}
 		}
-		parts[i] = style.Render(tabText(i, i == active))
+		parts[i] = style.Render(tabText(s, s == active))
 	}
 	return strings.Join(parts, " ")
 }

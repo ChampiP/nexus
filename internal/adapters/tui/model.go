@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"nexus/internal/catalog"
+	"nexus/internal/countdown"
 	"nexus/internal/tracking"
 )
 
@@ -58,6 +59,10 @@ type Model struct {
 	tree            []catalog.TreeOrganization
 	screen          screen
 	cat             catalogState
+	breaks          Breaks
+	brk             *countdown.Break
+	bp              breakPage
+	wasOverdue      bool
 }
 
 // NewModel creates a ready-to-type model backed by the application tracker.
@@ -68,10 +73,26 @@ func NewModel(tracker Tracker, options ...Option) Model {
 	}
 	m.loadCatalog()
 	m.initCatalogInput()
+	m.initBreakPage()
 	m.initInputs()
 	m.inputs[0].Focus()
 	m.refresh()
+	if m.brk != nil && breakOverdue(*m.brk, m.now) {
+		// Con el break vencido se abre directo en la pantalla de break, con el foco en [Volver al trabajo].
+		m.openBreakPage()
+	}
 	return m
+}
+
+// workEntries descarta los breaks: la pantalla de Temporizadores solo muestra trabajo.
+func workEntries(entries []tracking.Entry) []tracking.Entry {
+	work := make([]tracking.Entry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Kind != tracking.KindBreak {
+			work = append(work, entry)
+		}
+	}
+	return work
 }
 
 func (m Model) Init() tea.Cmd { return tick() }
@@ -80,13 +101,14 @@ func (m *Model) refresh() {
 	m.now = time.Now()
 	running, seconds, recent, err := m.tracker.Snapshot()
 	if err == nil {
-		m.running, m.todaySeconds, m.recent = running, seconds, recent
+		m.running, m.todaySeconds, m.recent = running, seconds, workEntries(recent)
 		if len(m.recent) > 8 {
 			m.recent = m.recent[:8]
 		}
 	}
 	m.totals, _ = m.tracker.Report(rangeStart(m.now, m.week))
 	m.loadCatalog()
+	m.loadBreak()
 	m.clampFocus()
 }
 
@@ -103,6 +125,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			_, cmd := m.updateCatalogMouse(msg)
 			return m, cmd
 		}
+		if m.screen == screenBreak {
+			_, cmd := m.updateBreakMouse(msg)
+			return m, cmd
+		}
 		_, cmd := m.updateMouse(msg)
 		return m, cmd
 	case tea.KeyMsg:
@@ -111,6 +137,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.screen == screenCatalog {
 			return m, m.updateCatalogKey(msg)
+		}
+		if m.screen == screenBreak {
+			return m, m.updateBreakKey(msg)
 		}
 		if msg.Type == tea.KeyCtrlZ && m.confirm == nil {
 			m.restoreLast()
@@ -140,12 +169,8 @@ func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
 		m.updateConfirm(key)
 		return nil
 	}
-	if m.focus == focusTabs {
-		switch key.Type {
-		case tea.KeyLeft, tea.KeyRight, tea.KeyEnter:
-			m.switchScreen(screenCatalog)
-			return nil
-		}
+	if m.focus == focusTabs && m.stepScreen(key.Type) {
+		return nil
 	}
 	if m.edit != nil && m.focus >= focusEditSave {
 		m.updateEditButtons(key)

@@ -48,7 +48,7 @@ func run(args []string) error {
 		return runDaemon(breaks)
 	}
 	if len(args) == 0 {
-		return tui.Run(tracker, catalogService)
+		return tui.Run(tracker, catalogService, breaks)
 	}
 	return cli.RunWithOptions(args, tracker, cli.Options{Catalog: catalogService, Breaks: breaks}, os.Stdout, os.Stderr)
 }

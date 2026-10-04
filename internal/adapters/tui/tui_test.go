@@ -23,6 +23,8 @@ type testStore struct {
 	editErr  error
 	totals   []tracking.ProjectTotal
 	counts   map[int64]int
+	// breaks son los breaks de hoy que informa el fake.
+	breaks []tracking.Entry
 }
 
 type editCall struct {
@@ -124,7 +126,18 @@ func (s *testStore) Projects(query string) []tracking.ProjectUsage {
 	return matches
 }
 func (s *testStore) Report(time.Time) ([]tracking.ProjectTotal, error) { return s.totals, nil }
-func (s *testStore) CountByProject(id int64) (int, error)              { return s.counts[id], nil }
+func (s *testStore) BreaksSince(time.Time) ([]tracking.Entry, error)   { return s.breaks, nil }
+func (s *testStore) Get(id int64) (tracking.Entry, error) {
+	for _, list := range [][]tracking.Entry{s.running, s.recent, s.trash} {
+		for _, entry := range list {
+			if entry.ID == id {
+				return entry, nil
+			}
+		}
+	}
+	return tracking.Entry{}, tracking.ErrNotFound
+}
+func (s *testStore) CountByProject(id int64) (int, error) { return s.counts[id], nil }
 
 func TestEnterStartsFromTitleAndResetsForm(t *testing.T) {
 	db := &testStore{projects: []tracking.ProjectUsage{{Name: "Studio"}}}

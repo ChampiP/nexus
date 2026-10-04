@@ -246,6 +246,11 @@ func (s *SQLite) BreakSeconds(since, now int64) (int64, error) {
 	return total, nil
 }
 
+// BreaksSince devuelve los breaks no eliminados iniciados en o después de since, en orden de inicio.
+func (s *SQLite) BreaksSince(since int64) ([]Entry, error) {
+	return s.queryEntries(`SELECT `+entryColumns+` FROM entries WHERE deleted_at IS NULL AND kind = 'break' AND started_at >= ? ORDER BY started_at, id`, since)
+}
+
 const entryColumns = `id, COALESCE(uid, ''), kind, title, description, project, COALESCE(project_id, 0), started_at, ended_at, deleted_at`
 
 // Get returns a live (not deleted) entry or ErrNotFound.

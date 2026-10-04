@@ -15,6 +15,7 @@ Keep it lean: one active break at a time, no movement reminders yet.
 - [x] 1. Domain: tracking kind=break (excluded from work totals/running list) + countdown module (migration, use cases, ports) + tests (commit 902289e)
 - [x] 2. CLI: break start/status/extend/end, additive `break` field in status --json (commit 6ac77e9)
 - [x] 3. Daemon: `nexus daemon` (deadline loop, notify-send actions), systemd user unit, make install (commit 17e0bac)
-- [ ] 4. TUI: break button, duration + timers-to-stop panel, break banner with actions
+- [x] 4. TUI: break button, duration + timers-to-stop panel, break banner with actions (commit b68a2fa)
 
 Later (not now): bar label and popup showing the break (needs QML + shell restart).
+- [x] 5. TUI: separate Break page (tab between Temporizadores and Catálogo); timers page keeps only a small header indicator; breaks out of Recientes/dashboard; notification opens on the Break page (user feedback: keep areas separate)

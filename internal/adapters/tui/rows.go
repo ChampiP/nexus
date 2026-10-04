@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"nexus/internal/countdown"
 	"nexus/internal/tracking"
 )
 
@@ -31,7 +32,7 @@ func (m Model) focusRing() []focusStop {
 		return []focusStop{{focusTitle, 0}, {focusProject, 0}, {focusDescription, 0}, {focusEditSave, 0}, {focusEditDelete, 0}, {focusEditCancel, 0}}
 	}
 	var stops []focusStop
-	if m.catalogEnabled() {
+	if m.tabsVisible() {
 		stops = append(stops, focusStop{focusTabs, 0})
 	}
 	stops = append(stops, focusStop{focusTitle, 0}, focusStop{focusProject, 0}, focusStop{focusDescription, 0}, focusStop{focusStart, 0})
@@ -240,6 +241,12 @@ func errorText(prefix string, err error) string {
 		return "El título no puede estar vacío"
 	case errors.Is(err, tracking.ErrNotFound):
 		return "La tarea ya no existe"
+	case errors.Is(err, countdown.ErrBreakActive):
+		return "Ya hay un break en curso"
+	case errors.Is(err, countdown.ErrInvalidDuration):
+		return "La duración debe estar entre 1 minuto y 8 horas"
+	case errors.Is(err, countdown.ErrNoActiveBreak):
+		return "No hay un break activo"
 	}
 	return prefix + ": " + err.Error()
 }

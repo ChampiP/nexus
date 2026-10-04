@@ -36,7 +36,7 @@ func (m Model) catalogLayout() catalogLayout {
 	if width < 1 {
 		width = 80
 	}
-	l := catalogLayout{tabs: tabRects(), headingY: 1, treeY: 2}
+	l := catalogLayout{tabs: tabRects(m.screens()), headingY: 1, treeY: 2}
 	total := len(m.cat.rows)
 	modal := m.modalHeight()
 	l.visible = total

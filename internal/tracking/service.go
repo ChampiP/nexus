@@ -101,6 +101,27 @@ func (t *Tracker) BreakSeconds(since time.Time) (int64, error) {
 	return n, nil
 }
 
+// BreaksSince devuelve los breaks iniciados desde since, en orden de inicio.
+func (t *Tracker) BreaksSince(since time.Time) ([]Entry, error) {
+	entries, err := t.repository.BreaksSince(since.Unix())
+	if err != nil {
+		return nil, fmt.Errorf("list breaks: %w", err)
+	}
+	return entries, nil
+}
+
+// Get devuelve la entrada id o ErrNotFound si no existe o está en la papelera.
+func (t *Tracker) Get(id int64) (Entry, error) {
+	entry, err := t.repository.Get(id)
+	if errors.Is(err, ErrNotFound) {
+		return Entry{}, err
+	}
+	if err != nil {
+		return Entry{}, fmt.Errorf("get entry #%d: %w", id, err)
+	}
+	return entry, nil
+}
+
 // IsRunning indica si la entrada id existe y sigue en curso (sea trabajo o break).
 func (t *Tracker) IsRunning(id int64) (bool, error) {
 	entry, err := t.repository.Get(id)

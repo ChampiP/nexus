@@ -12,6 +12,7 @@ var (
 	muted      = lipgloss.AdaptiveColor{Light: "#667085", Dark: "#A0A5B2"}
 	panel      = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.AdaptiveColor{Light: "#D8D7E8", Dark: "#414356"}).Padding(0, 1)
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(accent)
+	urgent     = lipgloss.AdaptiveColor{Light: "#B91C1C", Dark: "#F87171"}
 	label      = lipgloss.NewStyle().Foreground(muted)
 )
 

@@ -3,6 +3,7 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -10,11 +11,12 @@ import (
 	"nexus/internal/catalog"
 )
 
-// screen identifica la pantalla activa; el valor es el índice de su pestaña.
+// screen identifica la pantalla activa; el valor indexa tabLabels.
 type screen int
 
 const (
 	screenTimers screen = iota
+	screenBreak
 	screenCatalog
 )
 
@@ -324,8 +326,66 @@ func (m *Model) initCatalogInput() {
 	m.cat.input.Width = 42
 }
 
-// catalogEnabled indica si hay catálogo disponible (y por tanto pestañas).
-func (m Model) catalogEnabled() bool { return m.catalog != nil }
+// screens son las pantallas disponibles, en el orden de sus pestañas.
+func (m Model) screens() []screen {
+	screens := []screen{screenTimers}
+	if m.breaks != nil {
+		screens = append(screens, screenBreak)
+	}
+	if m.catalog != nil {
+		screens = append(screens, screenCatalog)
+	}
+	return screens
+}
+
+// tabsVisible indica si hay más de una pantalla y, por tanto, pestañas.
+func (m Model) tabsVisible() bool { return len(m.screens()) > 1 }
+
+// stepScreen mueve a la pantalla vecina con ←, → o Enter (circular); devuelve false si la tecla no es de pestañas.
+func (m *Model) stepScreen(key tea.KeyType) bool {
+	step := 1
+	switch key {
+	case tea.KeyLeft:
+		step = -1
+	case tea.KeyRight, tea.KeyEnter:
+	default:
+		return false
+	}
+	screens := m.screens()
+	for i, s := range screens {
+		if s == m.screen {
+			m.switchScreen(screens[(i+step+len(screens))%len(screens)])
+			break
+		}
+	}
+	return true
+}
+
+// clickTab resuelve un clic sobre la barra de pestañas: cambia de pantalla o, si es la actual, enfoca la barra.
+func (m *Model) clickTab(tabs []rect, x, y int) bool {
+	for i, zone := range tabs {
+		if !zone.contains(x, y) {
+			continue
+		}
+		target := m.screens()[i]
+		if target != m.screen {
+			m.switchScreen(target)
+			return true
+		}
+		switch target {
+		case screenCatalog:
+			m.cat.focus, m.cat.button = catFocusTabs, 0
+		case screenBreak:
+			m.bp.onTabs = true
+			m.syncBreakFocus()
+		default:
+			m.focus = focusTabs
+			m.closeProjectPicker()
+		}
+		return true
+	}
+	return false
+}
 
 // loadCatalog recarga el árbol (también lo usan los selectores de proyecto) y las filas si procede.
 func (m *Model) loadCatalog() {
@@ -406,21 +466,26 @@ func (m Model) nearestEditable(i int) int {
 
 // switchScreen cambia de pantalla y deja el foco en la barra de pestañas.
 func (m *Model) switchScreen(to screen) {
-	if to == screenCatalog && !m.catalogEnabled() {
+	if !slices.Contains(m.screens(), to) {
 		return
 	}
 	m.cancelCatalogModal()
 	m.closeProjectPicker()
 	m.screen = to
-	if to == screenCatalog {
+	switch to {
+	case screenCatalog:
 		m.cat.focus = catFocusTabs
 		m.cat.button = 0
 		m.cat.scroll = 0
-		m.refresh()
-		return
+	case screenBreak:
+		m.bp.onTabs = true
+		m.bp.action = 0
+		m.syncBreakFocus()
+	default:
+		m.focus = focusTabs
+		m.syncInputFocus()
+		m.syncBreakFocus()
 	}
-	m.focus = focusTabs
-	m.syncInputFocus()
 	m.refresh()
 }
 
@@ -522,7 +587,7 @@ func (m *Model) updateCatalogKey(key tea.KeyMsg) tea.Cmd {
 		}
 		switch c.focus {
 		case catFocusTabs:
-			m.switchScreen(screenTimers)
+			m.stepScreen(key.Type)
 		case catFocusRow:
 			c.button = min(max(c.button+step, 0), len(rowLabels(c.rows[c.row]))-1)
 		case catFocusAdd:
@@ -539,7 +604,7 @@ func (m *Model) activateCatalogFocus() {
 	c := &m.cat
 	switch c.focus {
 	case catFocusTabs:
-		m.switchScreen(screenTimers)
+		m.stepScreen(tea.KeyEnter)
 	case catFocusRow:
 		m.activateRowAction(c.rows[c.row], rowActions(c.rows[c.row])[c.button])
 	case catFocusAdd:

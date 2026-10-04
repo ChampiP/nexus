@@ -49,12 +49,7 @@ func (m *Model) updateCatalogMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // clickCatalog resuelve un clic cuando no hay campo, selector ni confirmación abiertos.
 func (m *Model) clickCatalog(l catalogLayout, x, y int) {
 	c := &m.cat
-	if l.tabs[0].contains(x, y) {
-		m.switchScreen(screenTimers)
-		return
-	}
-	if l.tabs[1].contains(x, y) {
-		c.focus, c.button = catFocusTabs, 0
+	if m.clickTab(l.tabs, x, y) {
 		return
 	}
 	for i, zone := range l.adds {
