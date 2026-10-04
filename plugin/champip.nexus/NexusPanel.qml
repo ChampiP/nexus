@@ -86,7 +86,9 @@ KeyboardPanel {
     owner.close()
   }
 
-  function formatToday() { return "Hoy " + Model.formatDuration(client.todaySeconds) }
+  function formatToday() {
+    return "Hoy " + Model.formatHMS(Model.liveTodaySeconds(client.todaySeconds, client.running.length, client.sampledAtMs, nowMs))
+  }
 
   onOpenChanged: {
     if (open) {

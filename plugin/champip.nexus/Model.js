@@ -13,6 +13,24 @@ function formatClock(startedAt, now) {
   return pad(hours) + ":" + pad(minutes) + ":" + pad(seconds)
 }
 
+function formatHMS(seconds) {
+  var value = Math.max(0, Math.floor(Number(seconds) || 0))
+  return Math.floor(value / 3600) + ":" + pad(Math.floor((value % 3600) / 60)) + ":" + pad(value % 60)
+}
+
+// Today's total keeps growing between polls: one second per running timer per elapsed second.
+function liveTodaySeconds(todaySeconds, runningCount, sampledAtMs, nowMs) {
+  var elapsed = Math.max(0, Math.floor((Number(nowMs) - Number(sampledAtMs)) / 1000))
+  return (Number(todaySeconds) || 0) + (Number(runningCount) || 0) * elapsed
+}
+
+// Bar label: a live clock with the timer count while something runs, calm hours/minutes when idle.
+function barLabel(todaySeconds, runningCount) {
+  return runningCount > 0
+    ? "󱎫 " + runningCount + " · " + formatHMS(todaySeconds)
+    : "󱎫 " + formatDuration(todaySeconds)
+}
+
 function pad(value) { return value < 10 ? "0" + value : String(value) }
 
 function filterProjects(projects, query) {
@@ -43,5 +61,6 @@ function canCreateProject(projects, query) {
 
 if (typeof module !== "undefined") {
   module.exports = { formatDuration: formatDuration, formatClock: formatClock,
+    formatHMS: formatHMS, liveTodaySeconds: liveTodaySeconds, barLabel: barLabel,
     filterProjects: filterProjects, canCreateProject: canCreateProject }
 }

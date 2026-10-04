@@ -17,7 +17,6 @@ BarWidget {
   function close() { panel.open = false }
   function toggle() { panel.open = !panel.open }
   function poll() { client.refresh() }
-  function formatToday(seconds) { return Model.formatDuration(seconds) }
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -51,9 +50,8 @@ BarWidget {
     repeat: true
     triggeredOnStart: true
     onTriggered: {
-      var extra = client.running.length > 0
-        ? Math.max(0, Math.floor((Date.now() - client.sampledAtMs) / 1000)) : 0
-      root.displayedTodaySeconds = client.todaySeconds + extra
+      root.displayedTodaySeconds = Model.liveTodaySeconds(
+        client.todaySeconds, client.running.length, client.sampledAtMs, Date.now())
     }
   }
 
@@ -63,7 +61,7 @@ BarWidget {
     bar: root.bar
     active: client.running.length > 0
     useActiveColor: false
-    text: "󱎫 " + root.formatToday(root.displayedTodaySeconds)
+    text: Model.barLabel(root.displayedTodaySeconds, client.running.length)
     tooltipText: client.running.length === 0
       ? "Nexus: sin temporizadores"
       : client.running.map(function(entry) {
