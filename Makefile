@@ -4,8 +4,9 @@ PLUGIN_DIR := $(HOME)/.config/omarchy/plugins/champip.nexus
 build:
 	go build -o nexus ./cmd/nexus
 
+# The architecture test inspects other packages via `go list`, so its result must never come from the test cache.
 test:
-	go vet ./... && go test ./...
+	go vet ./... && go test ./... && go test -count=1 ./internal/archtest
 
 # Installs the binary and links the bar plugin (edits here hot-reload in the shell).
 install:

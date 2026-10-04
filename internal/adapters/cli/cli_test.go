@@ -8,18 +8,22 @@ import (
 	"testing"
 	"time"
 
-	"nexus/internal/app"
-	"nexus/internal/store"
+	platformdb "nexus/internal/platform/db"
+	"nexus/internal/tracking"
 )
 
-func testTracker(t *testing.T) *app.Tracker {
+func testTracker(t *testing.T) *tracking.Tracker {
 	t.Helper()
-	db, err := store.Open(filepath.Join(t.TempDir(), "nexus.db"))
+	db, err := platformdb.Open(filepath.Join(t.TempDir(), "nexus.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = db.Close() })
-	return app.NewTracker(db, func() time.Time { return time.Date(2025, 3, 4, 12, 0, 0, 0, time.Local) })
+	repository, err := tracking.NewSQLite(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tracking.NewTracker(repository, func() time.Time { return time.Date(2025, 3, 4, 12, 0, 0, 0, time.Local) })
 }
 
 func invoke(t *testing.T, tracker Tracker, args ...string) (string, error) {

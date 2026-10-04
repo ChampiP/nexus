@@ -1,4 +1,4 @@
-package store
+package tracking
 
 import (
 	"errors"
@@ -6,20 +6,34 @@ import (
 	"testing"
 	"time"
 
-	"nexus/internal/domain"
+	platformdb "nexus/internal/platform/db"
 )
 
+// openSQLite opens a database at path and returns a SQLite repository over it.
+func openSQLite(path string) (*SQLite, error) {
+	db, err := platformdb.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	s, err := NewSQLite(db)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
 func TestOpenCreatesParentAndSupportsConcurrentTimers(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "nested", "nexus.db"))
+	s, err := openSQLite(filepath.Join(t.TempDir(), "nested", "nexus.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
-	first, err := s.Insert(domain.Entry{Title: "first", Project: "work", Description: "details", StartedAt: 1_700_000_000})
+	defer s.db.Close()
+	first, err := s.Insert(Entry{Title: "first", Project: "work", Description: "details", StartedAt: 1_700_000_000})
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := s.Insert(domain.Entry{Title: "second", Project: "home", StartedAt: 1_700_000_000})
+	second, err := s.Insert(Entry{Title: "second", Project: "home", StartedAt: 1_700_000_000})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,29 +50,29 @@ func TestOpenCreatesParentAndSupportsConcurrentTimers(t *testing.T) {
 }
 
 func TestStopRequiresRunningEntryAndStopAll(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "nexus.db"))
+	s, err := openSQLite(filepath.Join(t.TempDir(), "nexus.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
-	first, err := s.Insert(domain.Entry{Title: "first", StartedAt: 1})
+	defer s.db.Close()
+	first, err := s.Insert(Entry{Title: "first", StartedAt: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Stop(first.ID, 2); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Stop(first.ID, 3); !errors.Is(err, domain.ErrNotRunning) {
+	if err := s.Stop(first.ID, 3); !errors.Is(err, ErrNotRunning) {
 		t.Fatalf("Stop() error = %v", err)
 	}
-	second, _ := s.Insert(domain.Entry{Title: "second", StartedAt: 4})
-	third, _ := s.Insert(domain.Entry{Title: "third", StartedAt: 5})
+	second, _ := s.Insert(Entry{Title: "second", StartedAt: 4})
+	third, _ := s.Insert(Entry{Title: "third", StartedAt: 5})
 	count, err := s.StopAll(100)
 	if err != nil || count != 2 {
 		t.Fatalf("StopAll() = %d, %v", count, err)
 	}
 	for _, id := range []int64{second.ID, third.ID} {
-		if err := s.Stop(id, 101); !errors.Is(err, domain.ErrNotRunning) {
+		if err := s.Stop(id, 101); !errors.Is(err, ErrNotRunning) {
 			t.Errorf("Stop(%d) error = %v", id, err)
 		}
 	}
@@ -72,18 +86,18 @@ func TestStopRequiresRunningEntryAndStopAll(t *testing.T) {
 }
 
 func TestRecentTotalsAndProjectUsage(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "nexus.db"))
+	s, err := openSQLite(filepath.Join(t.TempDir(), "nexus.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer s.db.Close()
 	base := time.Date(2024, time.January, 2, 12, 0, 0, 0, time.Local).Unix()
-	finished, _ := s.Insert(domain.Entry{Title: "finished", Project: "alpha", StartedAt: base})
+	finished, _ := s.Insert(Entry{Title: "finished", Project: "alpha", StartedAt: base})
 	if err := s.Stop(finished.ID, base+7200); err != nil {
 		t.Fatal(err)
 	}
-	_, _ = s.Insert(domain.Entry{Title: "running", Project: "alpha", StartedAt: base + 10800})
-	_, _ = s.Insert(domain.Entry{Title: "other", Project: "beta", StartedAt: base + 10800})
+	_, _ = s.Insert(Entry{Title: "running", Project: "alpha", StartedAt: base + 10800})
+	_, _ = s.Insert(Entry{Title: "other", Project: "beta", StartedAt: base + 10800})
 	totals, err := s.Totals(base+3600, base+10800)
 	if err != nil {
 		t.Fatal(err)
@@ -103,7 +117,7 @@ func TestRecentTotalsAndProjectUsage(t *testing.T) {
 	if err != nil || len(projects) != 2 {
 		t.Fatalf("Projects() = %+v, %v", projects, err)
 	}
-	usage := map[string]domain.ProjectUsage{}
+	usage := map[string]ProjectUsage{}
 	for _, p := range projects {
 		usage[p.Name] = p
 	}
@@ -113,12 +127,12 @@ func TestRecentTotalsAndProjectUsage(t *testing.T) {
 }
 
 func TestStopUnknownID(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "nexus.db"))
+	s, err := openSQLite(filepath.Join(t.TempDir(), "nexus.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
-	if err := s.Stop(99, 100); !errors.Is(err, domain.ErrNotRunning) {
+	defer s.db.Close()
+	if err := s.Stop(99, 100); !errors.Is(err, ErrNotRunning) {
 		t.Errorf("Stop(unknown) error = %v", err)
 	}
 }

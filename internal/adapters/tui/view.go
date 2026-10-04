@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
-	"nexus/internal/domain"
+	"nexus/internal/tracking"
 )
 
 func (m Model) View() string {
@@ -121,7 +121,7 @@ func (m Model) dashboardPanel() string {
 		rangeName = "Semana"
 	}
 	lines := []string{titleStyle.Render("TIEMPO POR PROYECTO · " + rangeName)}
-	totals := append([]domain.ProjectTotal(nil), m.totals...)
+	totals := append([]tracking.ProjectTotal(nil), m.totals...)
 	sort.Slice(totals, func(i, j int) bool { return totals[i].Seconds > totals[j].Seconds })
 	maxSeconds := int64(0)
 	for _, item := range totals {

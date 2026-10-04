@@ -6,19 +6,18 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"nexus/internal/app"
-	"nexus/internal/domain"
+	"nexus/internal/tracking"
 )
 
 type testStore struct {
-	started  []domain.Entry
+	started  []tracking.Entry
 	stopped  []int64
-	running  []domain.Entry
-	projects []domain.ProjectUsage
+	running  []tracking.Entry
+	projects []tracking.ProjectUsage
 }
 
-func (s *testStore) Start(input app.StartInput) (domain.Entry, error) {
-	entry := domain.Entry{ID: int64(len(s.started) + 1), Title: input.Title, Project: input.Project, Description: input.Description}
+func (s *testStore) Start(input tracking.StartInput) (tracking.Entry, error) {
+	entry := tracking.Entry{ID: int64(len(s.started) + 1), Title: input.Title, Project: input.Project, Description: input.Description}
 	s.started = append(s.started, entry)
 	s.running = append(s.running, entry)
 	return entry, nil
@@ -33,11 +32,11 @@ func (s *testStore) Stop(id int64) error {
 	}
 	return nil
 }
-func (s *testStore) Snapshot() ([]domain.Entry, int64, []domain.Entry, error) {
-	return append([]domain.Entry(nil), s.running...), 0, append([]domain.Entry(nil), s.running...), nil
+func (s *testStore) Snapshot() ([]tracking.Entry, int64, []tracking.Entry, error) {
+	return append([]tracking.Entry(nil), s.running...), 0, append([]tracking.Entry(nil), s.running...), nil
 }
-func (s *testStore) Projects(query string) []domain.ProjectUsage {
-	var matches []domain.ProjectUsage
+func (s *testStore) Projects(query string) []tracking.ProjectUsage {
+	var matches []tracking.ProjectUsage
 	for _, project := range s.projects {
 		if strings.Contains(strings.ToLower(project.Name), strings.ToLower(query)) {
 			matches = append(matches, project)
@@ -45,10 +44,10 @@ func (s *testStore) Projects(query string) []domain.ProjectUsage {
 	}
 	return matches
 }
-func (s *testStore) Report(time.Time) ([]domain.ProjectTotal, error) { return nil, nil }
+func (s *testStore) Report(time.Time) ([]tracking.ProjectTotal, error) { return nil, nil }
 
 func TestEnterStartsFromTitleAndResetsForm(t *testing.T) {
-	db := &testStore{projects: []domain.ProjectUsage{{Name: "Studio"}}}
+	db := &testStore{projects: []tracking.ProjectUsage{{Name: "Studio"}}}
 	m := NewModel(db)
 	m.inputs[0].SetValue("Draft")
 	m.inputs[1].SetValue("Studio")
@@ -87,7 +86,7 @@ func TestArrowFocusRingAndBlankEnter(t *testing.T) {
 }
 
 func TestProjectFocusShowsAllProjectsAndMarksCurrent(t *testing.T) {
-	db := &testStore{projects: []domain.ProjectUsage{{Name: "nexus", Seconds: 500}, {Name: "tbwa", Seconds: 300}}}
+	db := &testStore{projects: []tracking.ProjectUsage{{Name: "nexus", Seconds: 500}, {Name: "tbwa", Seconds: 300}}}
 	m := NewModel(db)
 	if got := m.inputs[1].Value(); got != "nexus" {
 		t.Fatalf("initial project = %q, want nexus", got)
@@ -121,7 +120,7 @@ func TestProjectFocusShowsAllProjectsAndMarksCurrent(t *testing.T) {
 }
 
 func TestProjectArrowNavigationAndCycleWraps(t *testing.T) {
-	db := &testStore{projects: []domain.ProjectUsage{{Name: "nexus"}, {Name: "tbwa"}}}
+	db := &testStore{projects: []tracking.ProjectUsage{{Name: "nexus"}, {Name: "tbwa"}}}
 	m := NewModel(db)
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyTab})
 	if m.focus != focusProject || m.pickerOpen {
@@ -161,7 +160,7 @@ func TestProjectArrowNavigationAndCycleWraps(t *testing.T) {
 }
 
 func TestProjectTypingReplacesPrefillAndStartUsesSelection(t *testing.T) {
-	db := &testStore{projects: []domain.ProjectUsage{{Name: "nexus", Seconds: 500}, {Name: "tbwa", Seconds: 300}}}
+	db := &testStore{projects: []tracking.ProjectUsage{{Name: "nexus", Seconds: 500}, {Name: "tbwa", Seconds: 300}}}
 	m := NewModel(db)
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyTab})
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tb")})
@@ -193,7 +192,7 @@ func TestProjectTypingReplacesPrefillAndStartUsesSelection(t *testing.T) {
 }
 
 func TestProjectPickerEscEnterAndMouseTransitions(t *testing.T) {
-	db := &testStore{projects: []domain.ProjectUsage{{Name: "nexus"}, {Name: "tbwa"}}}
+	db := &testStore{projects: []tracking.ProjectUsage{{Name: "nexus"}, {Name: "tbwa"}}}
 	m := NewModel(db)
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyTab})
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -220,7 +219,7 @@ func TestProjectPickerEscEnterAndMouseTransitions(t *testing.T) {
 }
 
 func TestProjectPickerCreateOrderingAndExactMatch(t *testing.T) {
-	db := &testStore{projects: []domain.ProjectUsage{{Name: "tbwa"}, {Name: "toolbox"}}}
+	db := &testStore{projects: []tracking.ProjectUsage{{Name: "tbwa"}, {Name: "toolbox"}}}
 	m := NewModel(db)
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyTab})
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tb")})
@@ -241,7 +240,7 @@ func TestProjectPickerCreateOrderingAndExactMatch(t *testing.T) {
 }
 
 func TestProjectPickerTabKeepsConfirmedProjectAndMovesToDescription(t *testing.T) {
-	db := &testStore{projects: []domain.ProjectUsage{{Name: "nexus"}, {Name: "tbwa"}}}
+	db := &testStore{projects: []tracking.ProjectUsage{{Name: "nexus"}, {Name: "tbwa"}}}
 	m := NewModel(db)
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyTab})
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tb")})
@@ -255,7 +254,7 @@ func TestProjectPickerTabKeepsConfirmedProjectAndMovesToDescription(t *testing.T
 }
 
 func TestProjectPickerFiltersSelectsAndCreates(t *testing.T) {
-	db := &testStore{projects: []domain.ProjectUsage{{Name: "Studio", Seconds: 3600}, {Name: "Study", Seconds: 90}}}
+	db := &testStore{projects: []tracking.ProjectUsage{{Name: "Studio", Seconds: 3600}, {Name: "Study", Seconds: 90}}}
 	m := NewModel(db)
 	m.focus = focusProject
 	m.focusInput()
@@ -279,7 +278,7 @@ func TestProjectPickerFiltersSelectsAndCreates(t *testing.T) {
 }
 
 func TestEnterStopsFocusedTimerAndTabToggles(t *testing.T) {
-	db := &testStore{running: []domain.Entry{{ID: 7, Title: "Existing"}}}
+	db := &testStore{running: []tracking.Entry{{ID: 7, Title: "Existing"}}}
 	m := NewModel(db)
 	m.focus = focusRunningStart
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -294,7 +293,7 @@ func TestEnterStopsFocusedTimerAndTabToggles(t *testing.T) {
 }
 
 func TestMouseClickStopUsesRenderedLayout(t *testing.T) {
-	db := &testStore{running: []domain.Entry{{ID: 42, Title: "Timer"}}}
+	db := &testStore{running: []tracking.Entry{{ID: 42, Title: "Timer"}}}
 	m := NewModel(db)
 	m.width, m.height = 110, 34
 	layout := m.computeLayout()

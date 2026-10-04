@@ -1,19 +1,17 @@
-package app
+package tracking
 
 import (
 	"errors"
 	"testing"
 	"time"
-
-	"nexus/internal/domain"
 )
 
 type memoryRepository struct {
-	entries      []domain.Entry
-	projectUsage []domain.ProjectUsage
+	entries      []Entry
+	projectUsage []ProjectUsage
 }
 
-func (r *memoryRepository) Insert(entry domain.Entry) (domain.Entry, error) {
+func (r *memoryRepository) Insert(entry Entry) (Entry, error) {
 	entry.ID = int64(len(r.entries) + 1)
 	r.entries = append(r.entries, entry)
 	return entry, nil
@@ -25,7 +23,7 @@ func (r *memoryRepository) Stop(id, at int64) error {
 			return nil
 		}
 	}
-	return domain.ErrNotRunning
+	return ErrNotRunning
 }
 func (r *memoryRepository) StopAll(at int64) (int, error) {
 	n := 0
@@ -37,8 +35,8 @@ func (r *memoryRepository) StopAll(at int64) (int, error) {
 	}
 	return n, nil
 }
-func (r *memoryRepository) Running() ([]domain.Entry, error) {
-	var entries []domain.Entry
+func (r *memoryRepository) Running() ([]Entry, error) {
+	var entries []Entry
 	for _, e := range r.entries {
 		if e.EndedAt == nil {
 			entries = append(entries, e)
@@ -46,8 +44,8 @@ func (r *memoryRepository) Running() ([]domain.Entry, error) {
 	}
 	return entries, nil
 }
-func (r *memoryRepository) Recent(limit int) ([]domain.Entry, error) {
-	entries := append([]domain.Entry(nil), r.entries...)
+func (r *memoryRepository) Recent(limit int) ([]Entry, error) {
+	entries := append([]Entry(nil), r.entries...)
 	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
 		entries[i], entries[j] = entries[j], entries[i]
 	}
@@ -56,11 +54,11 @@ func (r *memoryRepository) Recent(limit int) ([]domain.Entry, error) {
 	}
 	return entries, nil
 }
-func (r *memoryRepository) Totals(since, now int64) ([]domain.ProjectTotal, error) {
+func (r *memoryRepository) Totals(since, now int64) ([]ProjectTotal, error) {
 	return nil, nil
 }
-func (r *memoryRepository) Projects(now int64) ([]domain.ProjectUsage, error) {
-	return append([]domain.ProjectUsage(nil), r.projectUsage...), nil
+func (r *memoryRepository) Projects(now int64) ([]ProjectUsage, error) {
+	return append([]ProjectUsage(nil), r.projectUsage...), nil
 }
 
 func TestStartTrimsTitleAndRejectsBlank(t *testing.T) {
@@ -71,7 +69,7 @@ func TestStartTrimsTitleAndRejectsBlank(t *testing.T) {
 		t.Fatalf("Start() = %+v, %v", entry, err)
 	}
 	_, err = tracker.Start(StartInput{Title: " \n\t "})
-	if !errors.Is(err, domain.ErrEmptyTitle) {
+	if !errors.Is(err, ErrEmptyTitle) {
 		t.Fatalf("blank Start() error = %v", err)
 	}
 	if len(repo.entries) != 1 {
@@ -80,7 +78,7 @@ func TestStartTrimsTitleAndRejectsBlank(t *testing.T) {
 }
 
 func TestProjectsSortsAndFiltersInTracker(t *testing.T) {
-	repo := &memoryRepository{projectUsage: []domain.ProjectUsage{
+	repo := &memoryRepository{projectUsage: []ProjectUsage{
 		{Name: "Alpha", LastUsed: 20, Seconds: 30},
 		{Name: "beta", LastUsed: 40, Seconds: 50},
 		{Name: "ALPINE", LastUsed: 40, Seconds: 10},

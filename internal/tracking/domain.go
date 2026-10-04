@@ -1,5 +1,5 @@
-// Package domain contains Nexus's storage- and UI-independent domain types.
-package domain
+// Package tracking is the time-tracking module: entities, use cases, ports and the SQLite adapter.
+package tracking
 
 import "errors"
 

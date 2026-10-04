@@ -4,17 +4,16 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"nexus/internal/app"
-	"nexus/internal/domain"
+	"nexus/internal/tracking"
 )
 
 // Tracker is the narrow application boundary required by the terminal interface.
 type Tracker interface {
-	Start(app.StartInput) (domain.Entry, error)
+	Start(tracking.StartInput) (tracking.Entry, error)
 	Stop(int64) error
-	Snapshot() ([]domain.Entry, int64, []domain.Entry, error)
-	Projects(string) []domain.ProjectUsage
-	Report(time.Time) ([]domain.ProjectTotal, error)
+	Snapshot() ([]tracking.Entry, int64, []tracking.Entry, error)
+	Projects(string) []tracking.ProjectUsage
+	Report(time.Time) ([]tracking.ProjectTotal, error)
 }
 
 type tickMsg time.Time

@@ -1,28 +1,11 @@
-// Package app contains Nexus use cases and their repository boundary.
-package app
+package tracking
 
 import (
 	"fmt"
 	"sort"
 	"strings"
 	"time"
-
-	"nexus/internal/domain"
 )
-
-// Repository provides persistence operations required by Tracker.
-type Repository interface {
-	Insert(domain.Entry) (domain.Entry, error)
-	Stop(id, endedAt int64) error
-	StopAll(endedAt int64) (int, error)
-	Running() ([]domain.Entry, error)
-	Recent(limit int) ([]domain.Entry, error)
-	Totals(since, now int64) ([]domain.ProjectTotal, error)
-	Projects(now int64) ([]domain.ProjectUsage, error)
-}
-
-// Clock supplies the current time to Tracker.
-type Clock func() time.Time
 
 // StartInput contains the fields needed to start a timer.
 type StartInput struct {
@@ -46,14 +29,14 @@ func NewTracker(repository Repository, clock Clock) *Tracker {
 }
 
 // Start creates a timer after trimming and validating its title.
-func (t *Tracker) Start(input StartInput) (domain.Entry, error) {
+func (t *Tracker) Start(input StartInput) (Entry, error) {
 	input.Title = strings.TrimSpace(input.Title)
 	if input.Title == "" {
-		return domain.Entry{}, domain.ErrEmptyTitle
+		return Entry{}, ErrEmptyTitle
 	}
-	entry, err := t.repository.Insert(domain.Entry{Title: input.Title, Project: input.Project, Description: input.Description, StartedAt: t.clock().Unix()})
+	entry, err := t.repository.Insert(Entry{Title: input.Title, Project: input.Project, Description: input.Description, StartedAt: t.clock().Unix()})
 	if err != nil {
-		return domain.Entry{}, fmt.Errorf("start timer: %w", err)
+		return Entry{}, fmt.Errorf("start timer: %w", err)
 	}
 	return entry, nil
 }
@@ -73,7 +56,7 @@ func (t *Tracker) StopLatest() error {
 		return fmt.Errorf("list running timers: %w", err)
 	}
 	if len(running) == 0 {
-		return domain.ErrNotRunning
+		return ErrNotRunning
 	}
 	latest := running[0]
 	for _, entry := range running[1:] {
@@ -94,7 +77,7 @@ func (t *Tracker) StopAll() (int, error) {
 }
 
 // Snapshot returns running entries, today's total seconds, and recent entries.
-func (t *Tracker) Snapshot() (running []domain.Entry, todaySeconds int64, recent []domain.Entry, err error) {
+func (t *Tracker) Snapshot() (running []Entry, todaySeconds int64, recent []Entry, err error) {
 	now := t.clock()
 	running, err = t.repository.Running()
 	if err != nil {
@@ -115,13 +98,13 @@ func (t *Tracker) Snapshot() (running []domain.Entry, todaySeconds int64, recent
 }
 
 // Projects returns non-empty project usage sorted by most recent use, filtered by substring.
-func (t *Tracker) Projects(query string) []domain.ProjectUsage {
+func (t *Tracker) Projects(query string) []ProjectUsage {
 	projects, err := t.repository.Projects(t.clock().Unix())
 	if err != nil {
-		return []domain.ProjectUsage{}
+		return []ProjectUsage{}
 	}
 	query = strings.ToLower(strings.TrimSpace(query))
-	filtered := make([]domain.ProjectUsage, 0, len(projects))
+	filtered := make([]ProjectUsage, 0, len(projects))
 	for _, project := range projects {
 		if strings.TrimSpace(project.Name) == "" || !strings.Contains(strings.ToLower(project.Name), query) {
 			continue
@@ -138,7 +121,7 @@ func (t *Tracker) Projects(query string) []domain.ProjectUsage {
 }
 
 // Report returns project totals for intervals overlapping since.
-func (t *Tracker) Report(since time.Time) ([]domain.ProjectTotal, error) {
+func (t *Tracker) Report(since time.Time) ([]ProjectTotal, error) {
 	totals, err := t.repository.Totals(since.Unix(), t.clock().Unix())
 	if err != nil {
 		return nil, fmt.Errorf("report tracked time: %w", err)

@@ -11,19 +11,18 @@ import (
 	"strings"
 	"time"
 
-	"nexus/internal/app"
-	"nexus/internal/domain"
+	"nexus/internal/tracking"
 )
 
 // Tracker describes the use cases required by the command line.
 type Tracker interface {
-	Start(app.StartInput) (domain.Entry, error)
+	Start(tracking.StartInput) (tracking.Entry, error)
 	Stop(int64) error
 	StopLatest() error
 	StopAll() (int, error)
-	Snapshot() ([]domain.Entry, int64, []domain.Entry, error)
-	Projects(string) []domain.ProjectUsage
-	Report(time.Time) ([]domain.ProjectTotal, error)
+	Snapshot() ([]tracking.Entry, int64, []tracking.Entry, error)
+	Projects(string) []tracking.ProjectUsage
+	Report(time.Time) ([]tracking.ProjectTotal, error)
 }
 
 type statusEntry struct {
@@ -78,9 +77,9 @@ func Run(args []string, tracker Tracker, stdout, stderr io.Writer) error {
 // localize translates domain sentinel errors into user-facing Spanish; the domain keeps neutral text.
 func localize(err error) error {
 	switch {
-	case errors.Is(err, domain.ErrEmptyTitle):
+	case errors.Is(err, tracking.ErrEmptyTitle):
 		return errors.New("el título no puede estar vacío")
-	case errors.Is(err, domain.ErrNotRunning):
+	case errors.Is(err, tracking.ErrNotRunning):
 		return errors.New("el temporizador no está en curso")
 	default:
 		return err
@@ -115,7 +114,7 @@ func run(args []string, tracker Tracker, stdout, stderr io.Writer) error {
 }
 
 func runStart(args []string, tracker Tracker, stdout io.Writer) error {
-	var input app.StartInput
+	var input tracking.StartInput
 	jsonMode := contains(args, "--json")
 	var titles []string
 	for i := 0; i < len(args); i++ {
@@ -351,7 +350,7 @@ func runReport(args []string, tracker Tracker, stdout io.Writer) error {
 	return nil
 }
 
-func presentStatus(entry domain.Entry, now time.Time) statusEntry {
+func presentStatus(entry tracking.Entry, now time.Time) statusEntry {
 	return statusEntry{ID: entry.ID, Title: entry.Title, Project: entry.Project, StartedAt: entry.StartedAt, Elapsed: elapsed(now.Unix() - entry.StartedAt)}
 }
 func contains(args []string, value string) bool {

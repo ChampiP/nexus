@@ -7,8 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"nexus/internal/app"
-	"nexus/internal/domain"
+	"nexus/internal/tracking"
 )
 
 type focusTarget int
@@ -27,9 +26,9 @@ const (
 type Model struct {
 	tracker         Tracker
 	inputs          []textinput.Model
-	running         []domain.Entry
-	recent          []domain.Entry
-	totals          []domain.ProjectTotal
+	running         []tracking.Entry
+	recent          []tracking.Entry
+	totals          []tracking.ProjectTotal
 	todaySeconds    int64
 	week            bool
 	focus           focusTarget
@@ -258,7 +257,7 @@ func (m *Model) startTimer() {
 		m.message = "Escribe un título"
 		return
 	}
-	entry, err := m.tracker.Start(app.StartInput{Title: title, Project: m.selectedProject, Description: strings.TrimSpace(m.inputs[2].Value())})
+	entry, err := m.tracker.Start(tracking.StartInput{Title: title, Project: m.selectedProject, Description: strings.TrimSpace(m.inputs[2].Value())})
 	if err != nil {
 		m.message = "No se pudo iniciar: " + err.Error()
 		return
