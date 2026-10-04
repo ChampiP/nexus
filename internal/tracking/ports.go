@@ -19,6 +19,7 @@ type Repository interface {
 	Purge(before int64) (int, error)
 	Relink(fromID, toID int64, toName string) error
 	RenameProject(id int64, name string) error
+	CountByProject(projectID int64) (int, error)
 }
 
 // Clock supplies the current time to Tracker.

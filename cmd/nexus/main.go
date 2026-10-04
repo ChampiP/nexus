@@ -26,7 +26,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	tracker, closeDB, err := openTracker(path)
+	tracker, catalogService, closeDB, err := openApp(path)
 	if err != nil {
 		if len(args) > 0 && args[0] == "status" && hasJSONFlag(args[1:]) {
 			return cli.Run(args, nil, os.Stdout, os.Stderr)
@@ -37,14 +37,14 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return tui.Run(tracker)
 	}
-	return cli.Run(args, tracker, os.Stdout, os.Stderr)
+	return cli.RunWithCatalog(args, tracker, catalogService, os.Stdout, os.Stderr)
 }
 
-// openTracker opens and migrates the database at path and builds the tracking use cases over it.
-func openTracker(path string) (*tracking.Tracker, func() error, error) {
+// openApp abre y migra la base de datos en path y construye los casos de uso de seguimiento y catálogo.
+func openApp(path string) (*tracking.Tracker, *catalog.Service, func() error, error) {
 	db, err := platformdb.Open(path)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	_, backup, err := migrateAndReconcile(db, path, time.Now)
 	if backup != "" {
@@ -52,13 +52,13 @@ func openTracker(path string) (*tracking.Tracker, func() error, error) {
 	}
 	if err != nil {
 		db.Close()
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	tracker, _ := wire(db, time.Now)
+	tracker, catalogService := wire(db, time.Now)
 	if _, err := tracker.Purge(trashRetention); err != nil {
 		fmt.Fprintln(os.Stderr, "nexus: no se pudo purgar la papelera:", err)
 	}
-	return tracker, db.Close, nil
+	return tracker, catalogService, db.Close, nil
 }
 
 // trashRetention is how long soft-deleted entries stay restorable.

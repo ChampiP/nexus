@@ -20,6 +20,7 @@ type Entry struct {
 	ProjectID   int64 // 0 means no catalog project (NULL)
 	StartedAt   int64
 	EndedAt     *int64
+	DeletedAt   *int64 // nil si la tarea no está en la papelera
 }
 
 // ProjectTotal is the tracked duration for one project, in whole seconds.

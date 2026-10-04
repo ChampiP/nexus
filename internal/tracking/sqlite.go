@@ -236,7 +236,7 @@ func (s *SQLite) Projects(now int64) ([]ProjectUsage, error) {
 	return projects, nil
 }
 
-const entryColumns = `id, COALESCE(uid, ''), kind, title, description, project, COALESCE(project_id, 0), started_at, ended_at`
+const entryColumns = `id, COALESCE(uid, ''), kind, title, description, project, COALESCE(project_id, 0), started_at, ended_at, deleted_at`
 
 // Get returns a live (not deleted) entry or ErrNotFound.
 func (s *SQLite) Get(id int64) (Entry, error) {
@@ -314,6 +314,15 @@ func expectRow(result sql.Result, err error, what string) error {
 	return nil
 }
 
+// CountByProject cuenta las tareas vivas (no borradas) de un proyecto del catálogo.
+func (s *SQLite) CountByProject(projectID int64) (int, error) {
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM entries WHERE project_id = ? AND deleted_at IS NULL`, projectID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count project entries: %w", err)
+	}
+	return n, nil
+}
+
 func (s *SQLite) queryEntries(query string, args ...any) ([]Entry, error) {
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -323,12 +332,15 @@ func (s *SQLite) queryEntries(query string, args ...any) ([]Entry, error) {
 	var entries []Entry
 	for rows.Next() {
 		var entry Entry
-		var ended sql.NullInt64
-		if err := rows.Scan(&entry.ID, &entry.UID, &entry.Kind, &entry.Title, &entry.Description, &entry.Project, &entry.ProjectID, &entry.StartedAt, &ended); err != nil {
+		var ended, deleted sql.NullInt64
+		if err := rows.Scan(&entry.ID, &entry.UID, &entry.Kind, &entry.Title, &entry.Description, &entry.Project, &entry.ProjectID, &entry.StartedAt, &ended, &deleted); err != nil {
 			return nil, fmt.Errorf("scan entry: %w", err)
 		}
 		if ended.Valid {
 			entry.EndedAt = &ended.Int64
+		}
+		if deleted.Valid {
+			entry.DeletedAt = &deleted.Int64
 		}
 		entries = append(entries, entry)
 	}

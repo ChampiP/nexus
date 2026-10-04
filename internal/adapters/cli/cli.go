@@ -2,15 +2,11 @@
 package cli
 
 import (
-	"encoding/json"
-	"errors"
-	"flag"
 	"fmt"
 	"io"
-	"strconv"
-	"strings"
 	"time"
 
+	"nexus/internal/catalog"
 	"nexus/internal/tracking"
 )
 
@@ -23,79 +19,64 @@ type Tracker interface {
 	Snapshot() ([]tracking.Entry, int64, []tracking.Entry, error)
 	Projects(string) []tracking.ProjectUsage
 	Report(time.Time) ([]tracking.ProjectTotal, error)
+	Edit(int64, tracking.EditInput) (tracking.Entry, error)
+	Delete(int64) error
+	Restore(int64) error
+	Deleted(int) ([]tracking.Entry, error)
+	CountByProject(int64) (int, error)
 }
 
-type statusEntry struct {
-	ID        int64  `json:"id"`
-	Title     string `json:"title"`
-	Project   string `json:"project"`
-	StartedAt int64  `json:"started_at"`
-	Elapsed   string `json:"elapsed"`
-}
-type statusOutput struct {
-	Running      []statusEntry `json:"running"`
-	Count        int           `json:"count"`
-	TodaySeconds int64         `json:"today_seconds"`
-}
-type createdEntry struct {
-	ID          int64  `json:"id"`
-	Title       string `json:"title"`
-	Project     string `json:"project"`
-	Description string `json:"description"`
-	StartedAt   int64  `json:"started_at"`
-}
-type stoppedOutput struct {
-	Stopped int `json:"stopped"`
-}
-type recentEntry struct {
-	ID        int64  `json:"id"`
-	Title     string `json:"title"`
-	Project   string `json:"project"`
-	StartedAt int64  `json:"started_at"`
-	EndedAt   *int64 `json:"ended_at"`
-	Seconds   int64  `json:"seconds"`
-}
-type listOutput struct {
-	Running []statusEntry `json:"running"`
-	Recent  []recentEntry `json:"recent"`
-}
-type projectOutput struct {
-	Name     string `json:"name"`
-	LastUsed int64  `json:"last_used"`
-	Seconds  int64  `json:"seconds"`
-}
-type errorOutput struct {
-	Error string `json:"error"`
+// Catalog describe los casos de uso del catálogo que necesita la línea de comandos.
+type Catalog interface {
+	CreateOrganization(string) (catalog.Organization, error)
+	RenameOrganization(int64, string) error
+	DeleteOrganization(int64) error
+	CreateClient(string, int64) (catalog.Client, error)
+	RenameClient(int64, string) error
+	MoveClient(clientID, organizationID int64) error
+	DeleteClient(int64) error
+	CreateProject(string, int64) (catalog.Project, error)
+	RenameProject(int64, string) error
+	MoveProject(projectID, clientID int64) error
+	ArchiveProject(int64) error
+	UnarchiveProject(int64) error
+	DeleteProject(int64) error
+	MergeProjects(fromID, intoID int64) error
+	Tree() ([]catalog.TreeOrganization, error)
 }
 
 // Run executes a Nexus command. A nil tracker is supported by status --json so that
 // status remains safe when the configured database cannot be opened.
 func Run(args []string, tracker Tracker, stdout, stderr io.Writer) error {
-	return localize(run(args, tracker, stdout, stderr))
+	return RunWithCatalog(args, tracker, nil, stdout, stderr)
 }
 
-// localize translates domain sentinel errors into user-facing Spanish; the domain keeps neutral text.
-func localize(err error) error {
-	switch {
-	case errors.Is(err, tracking.ErrEmptyTitle):
-		return errors.New("el título no puede estar vacío")
-	case errors.Is(err, tracking.ErrNotRunning):
-		return errors.New("el temporizador no está en curso")
-	default:
-		return err
-	}
+// RunWithCatalog ejecuta un comando de Nexus con acceso al catálogo; un catálogo nulo hace que
+// los comandos de catálogo fallen con un mensaje claro en lugar de entrar en pánico.
+func RunWithCatalog(args []string, tracker Tracker, catalog Catalog, stdout, stderr io.Writer) error {
+	return localize(run(args, tracker, catalog, stdout, stderr))
 }
 
-func run(args []string, tracker Tracker, stdout, stderr io.Writer) error {
+func run(args []string, tracker Tracker, catalog Catalog, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: nexus <start|stop|ls|status|report|projects>")
+		fmt.Fprint(stderr, usageText)
+		return fmt.Errorf("falta el comando")
 	}
 	command, args := args[0], args[1:]
-	if command == "status" {
+	switch command {
+	case "help", "-h", "--help":
+		_, err := fmt.Fprint(stdout, usageText)
+		return err
+	case "status":
 		return runStatus(args, tracker, stdout)
+	case "org", "client", "project", "tree":
+		if catalog == nil {
+			return fmt.Errorf("el catálogo no está disponible")
+		}
+		return runCatalog(command, args, catalog, tracker, stdout)
 	}
 	if tracker == nil {
-		return fmt.Errorf("tracker is unavailable")
+		return fmt.Errorf("el registro de tiempo no está disponible")
 	}
 	switch command {
 	case "start":
@@ -108,251 +89,59 @@ func run(args []string, tracker Tracker, stdout, stderr io.Writer) error {
 		return runProjects(args, tracker, stdout)
 	case "report":
 		return runReport(args, tracker, stdout)
+	case "edit":
+		return runEdit(args, tracker, stdout)
+	case "rm":
+		return runRemove(args, tracker, stdout)
+	case "restore":
+		return runRestore(args, tracker, stdout)
+	case "trash":
+		return runTrash(args, tracker, stdout)
 	default:
+		fmt.Fprint(stderr, usageText)
 		return fmt.Errorf("comando desconocido %q", command)
 	}
 }
 
-func runStart(args []string, tracker Tracker, stdout io.Writer) error {
-	var input tracking.StartInput
-	jsonMode := contains(args, "--json")
-	var titles []string
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "--json":
-			jsonMode = true
-		case "-p", "--project", "-d", "--description":
-			if i+1 >= len(args) {
-				return startError(fmt.Errorf("%s requiere un valor", args[i]), jsonMode, stdout)
-			}
-			i++
-			if args[i-1] == "-p" || args[i-1] == "--project" {
-				input.Project = args[i]
-			} else {
-				input.Description = args[i]
-			}
-		default:
-			if strings.HasPrefix(args[i], "-") {
-				return startError(fmt.Errorf("opción desconocida %q", args[i]), jsonMode, stdout)
-			}
-			titles = append(titles, args[i])
-		}
-	}
-	if len(titles) != 1 {
-		return startError(fmt.Errorf("uso: nexus start <título> [-p proyecto] [-d descripción]"), jsonMode, stdout)
-	}
-	input.Title = titles[0]
-	entry, err := tracker.Start(input)
-	if err != nil {
-		return startError(err, jsonMode, stdout)
-	}
-	if jsonMode {
-		return json.NewEncoder(stdout).Encode(createdEntry{entry.ID, entry.Title, entry.Project, entry.Description, entry.StartedAt})
-	}
-	_, err = fmt.Fprintf(stdout, "iniciado #%d %s\n", entry.ID, entry.Title)
-	return err
-}
+// usageText lista todos los comandos agrupados por tema.
+const usageText = `Uso: nexus [comando]
 
-func startError(err error, jsonMode bool, stdout io.Writer) error {
-	if jsonMode {
-		if encodeErr := json.NewEncoder(stdout).Encode(errorOutput{Error: localize(err).Error()}); encodeErr != nil {
-			return encodeErr
-		}
-	}
-	return err
-}
+Sin comando se abre la interfaz interactiva.
 
-func runStop(args []string, tracker Tracker, stdout io.Writer) error {
-	all, jsonMode := false, false
-	var positional []string
-	for _, arg := range args {
-		switch arg {
-		case "--all":
-			all = true
-		case "--json":
-			jsonMode = true
-		default:
-			positional = append(positional, arg)
-		}
-	}
-	if len(positional) > 1 || (all && len(positional) != 0) {
-		return fmt.Errorf("uso: nexus stop [id] [--all]")
-	}
-	count := 1
-	var err error
-	var stoppedID int64
-	if all {
-		count, err = tracker.StopAll()
-	} else if len(positional) == 0 {
-		running, _, _, snapshotErr := tracker.Snapshot()
-		if snapshotErr != nil {
-			return snapshotErr
-		}
-		if len(running) > 0 {
-			stoppedID = running[len(running)-1].ID
-		}
-		err = tracker.StopLatest()
-	} else {
-		stoppedID, err = strconv.ParseInt(positional[0], 10, 64)
-		if err == nil {
-			err = tracker.Stop(stoppedID)
-		}
-	}
-	if err != nil {
-		return err
-	}
-	if jsonMode {
-		return json.NewEncoder(stdout).Encode(stoppedOutput{Stopped: count})
-	}
-	if all {
-		_, err = fmt.Fprintf(stdout, "detenidos %d\n", count)
-	} else {
-		_, err = fmt.Fprintf(stdout, "detenido #%d\n", stoppedID)
-	}
-	return err
-}
+Temporizadores:
+  nexus start <título> [-p proyecto] [-d descripción] [--json]   inicia un temporizador
+  nexus stop [id] [--all] [--json]                               detiene uno o todos
+  nexus status [--json]                                          muestra lo que está en curso
+  nexus ls [--json]                                              lista en curso y recientes
+  nexus report [--week]                                          tiempo por proyecto
 
-func runStatus(args []string, tracker Tracker, stdout io.Writer) error {
-	jsonMode := contains(args, "--json")
-	if hasUnknownStatusArgument(args) && !jsonMode {
-		return fmt.Errorf("uso: nexus status [--json]")
-	}
-	output := statusOutput{Running: []statusEntry{}}
-	if tracker != nil {
-		running, today, _, err := tracker.Snapshot()
-		if err == nil {
-			output.TodaySeconds = today
-			output.Count = len(running)
-			for _, entry := range running {
-				output.Running = append(output.Running, presentStatus(entry, time.Now()))
-			}
-		}
-	}
-	if jsonMode {
-		return json.NewEncoder(stdout).Encode(output)
-	}
-	if output.Count == 0 {
-		_, err := fmt.Fprintf(stdout, "En curso: sin temporizadores\nHoy: %s\n", humanDuration(output.TodaySeconds))
-		return err
-	}
-	if _, err := fmt.Fprintf(stdout, "En curso: %d\nHoy: %s\n", output.Count, humanDuration(output.TodaySeconds)); err != nil {
-		return err
-	}
-	for _, entry := range output.Running {
-		if _, err := fmt.Fprintf(stdout, "  #%d %s %s\n", entry.ID, entry.Title, entry.Elapsed); err != nil {
-			return err
-		}
-	}
-	return nil
-}
+Tareas:
+  nexus edit <id> [-t título] [-p proyecto] [-d descripción] [--json]
+  nexus rm <id> [--json]                                         envía la tarea a la papelera
+  nexus restore <id> [--json]                                    la recupera de la papelera
+  nexus trash [--json]                                           lista la papelera
+  nexus projects [-q consulta] [--json]                          proyectos usados
 
-func runList(args []string, tracker Tracker, stdout io.Writer) error {
-	jsonMode := contains(args, "--json")
-	if len(args) > 0 && (!jsonMode || len(args) != 1) {
-		return fmt.Errorf("uso: nexus ls [--json]")
-	}
-	running, _, recent, err := tracker.Snapshot()
-	if err != nil {
-		return err
-	}
-	now := time.Now()
-	output := listOutput{Running: make([]statusEntry, 0, len(running)), Recent: make([]recentEntry, 0, len(recent))}
-	for _, entry := range running {
-		output.Running = append(output.Running, presentStatus(entry, now))
-	}
-	for _, entry := range recent {
-		seconds := now.Unix() - entry.StartedAt
-		if entry.EndedAt != nil {
-			seconds = *entry.EndedAt - entry.StartedAt
-		}
-		output.Recent = append(output.Recent, recentEntry{entry.ID, entry.Title, entry.Project, entry.StartedAt, entry.EndedAt, seconds})
-	}
-	if jsonMode {
-		return json.NewEncoder(stdout).Encode(output)
-	}
-	if len(running) == 0 {
-		if _, err := fmt.Fprintln(stdout, "En curso: sin temporizadores"); err != nil {
-			return err
-		}
-	} else {
-		if _, err := fmt.Fprintln(stdout, "En curso:"); err != nil {
-			return err
-		}
-		for _, entry := range output.Running {
-			if _, err := fmt.Fprintf(stdout, "  #%d %s %s\n", entry.ID, entry.Title, entry.Elapsed); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
+Catálogo (las referencias aceptan nombre o id; "-" significa ninguno):
+  nexus tree [--all] [--json]                                    organización > cliente > proyecto
+  nexus org add <nombre>
+  nexus org rename <org> <nuevo>
+  nexus org rm <org> --yes
+  nexus client add <nombre> [-o organización]
+  nexus client rename <cliente> <nuevo>
+  nexus client mv <cliente> <organización|->
+  nexus client rm <cliente> --yes
+  nexus project add <nombre> [-c cliente]
+  nexus project rename <proyecto> <nuevo>
+  nexus project mv <proyecto> <cliente|->
+  nexus project archive <proyecto>
+  nexus project unarchive <proyecto>
+  nexus project merge <origen> <destino> --yes
+  nexus project rm <proyecto> --yes
 
-func runProjects(args []string, tracker Tracker, stdout io.Writer) error {
-	fs := flag.NewFlagSet("projects", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	query := fs.String("q", "", "query")
-	fs.StringVar(query, "query", "", "query")
-	jsonMode := fs.Bool("json", false, "json")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return fmt.Errorf("uso: nexus projects [--json] [-q consulta]")
-	}
-	projects := tracker.Projects(*query)
-	if *jsonMode {
-		out := make([]projectOutput, 0, len(projects))
-		for _, project := range projects {
-			out = append(out, projectOutput{project.Name, project.LastUsed, project.Seconds})
-		}
-		return json.NewEncoder(stdout).Encode(out)
-	}
-	for _, project := range projects {
-		if _, err := fmt.Fprintln(stdout, project.Name); err != nil {
-			return err
-		}
-	}
-	return nil
-}
+Los comandos de catálogo aceptan --json; los destructivos exigen --yes.
+`
 
-func runReport(args []string, tracker Tracker, stdout io.Writer) error {
-	fs := flag.NewFlagSet("report", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	week := fs.Bool("week", false, "last seven days")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if fs.NArg() != 0 {
-		return fmt.Errorf("uso: nexus report [--week]")
-	}
-	now := time.Now()
-	since := dayStart(now)
-	if *week {
-		since = since.AddDate(0, 0, -6)
-	}
-	totals, err := tracker.Report(since)
-	if err != nil {
-		return err
-	}
-	if len(totals) == 0 {
-		_, err = fmt.Fprintln(stdout, "Sin tiempo registrado")
-		return err
-	}
-	for _, total := range totals {
-		name := total.Project
-		if name == "" {
-			name = "Sin proyecto"
-		}
-		if _, err := fmt.Fprintf(stdout, "%-24s %s\n", name, humanDuration(total.Seconds)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func presentStatus(entry tracking.Entry, now time.Time) statusEntry {
-	return statusEntry{ID: entry.ID, Title: entry.Title, Project: entry.Project, StartedAt: entry.StartedAt, Elapsed: elapsed(now.Unix() - entry.StartedAt)}
-}
 func contains(args []string, value string) bool {
 	for _, arg := range args {
 		if arg == value {

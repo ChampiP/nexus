@@ -229,3 +229,31 @@ func TestRelinkAndRenameProject(t *testing.T) {
 		}
 	}
 }
+
+// La papelera necesita saber cuándo se borró cada tarea, no cuándo empezó.
+func TestDeletedCarriesDeletionTime(t *testing.T) {
+	now := int64(100)
+	tracker, _ := newEditTracker(t, &now)
+	entry, _ := tracker.Start(StartInput{Title: "a"})
+	now = 500
+	if err := tracker.Delete(entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	trash, _ := tracker.Deleted(10)
+	if len(trash) != 1 || trash[0].DeletedAt == nil || *trash[0].DeletedAt != 500 {
+		t.Fatalf("Deleted() = %+v, quiero DeletedAt=500", trash)
+	}
+}
+
+// Cuenta solo las tareas vivas de un proyecto, para avisar cuántas afecta un cambio.
+func TestCountByProjectIgnoresDeleted(t *testing.T) {
+	now := int64(100)
+	tracker, _ := newEditTracker(t, &now)
+	a, _ := tracker.Start(StartInput{Title: "a", Project: "Alpha"})
+	_, _ = tracker.Start(StartInput{Title: "b", Project: "Alpha"})
+	_, _ = tracker.Start(StartInput{Title: "c", Project: "Beta"})
+	_ = tracker.Delete(a.ID)
+	if n, err := tracker.CountByProject(1); err != nil || n != 1 {
+		t.Fatalf("CountByProject(1) = %d, %v; quiero 1", n, err)
+	}
+}

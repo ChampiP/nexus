@@ -1,0 +1,331 @@
+package cli
+
+import (
+	"bytes"
+	"encoding/json"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"nexus/internal/catalog"
+	platformdb "nexus/internal/platform/db"
+	"nexus/internal/tracking"
+)
+
+// Adaptadores mínimos que replican el cableado de cmd/nexus para probar la CLI de punta a punta.
+type testEntries struct{ tracker *tracking.Tracker }
+
+func (e testEntries) Relink(fromID, toID int64, toName string) error {
+	return e.tracker.Relink(fromID, toID, toName)
+}
+func (e testEntries) RenameProject(id int64, name string) error {
+	return e.tracker.RenameProject(id, name)
+}
+
+type testProjects struct{ repo *catalog.SQLite }
+
+func (p testProjects) EnsureProject(name string) (int64, error) {
+	project, err := p.repo.EnsureProject(name)
+	return project.ID, err
+}
+
+type app struct {
+	tracker *tracking.Tracker
+	catalog *catalog.Service
+}
+
+func newApp(t *testing.T) app {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "nexus.db")
+	db, err := platformdb.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	steps := tracking.Migrations()
+	migrations := append([]platformdb.Migration{steps[0]}, catalog.Migrations()...)
+	migrations = append(migrations, steps[1:]...)
+	if _, _, err := platformdb.Migrate(db, path, migrations, time.Now); err != nil {
+		t.Fatal(err)
+	}
+	now := func() time.Time { return time.Date(2025, 3, 4, 12, 0, 0, 0, time.Local) }
+	repo := catalog.NewSQLite(db)
+	tracker := tracking.NewTracker(tracking.NewSQLite(db), now, tracking.WithProjects(testProjects{repo}))
+	return app{tracker, catalog.NewService(repo, testEntries{tracker}, now)}
+}
+
+func (a app) run(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	var out, stderr bytes.Buffer
+	err := RunWithCatalog(args, a.tracker, a.catalog, &out, &stderr)
+	return out.String(), err
+}
+
+func (a app) mustRun(t *testing.T, args ...string) string {
+	t.Helper()
+	out, err := a.run(t, args...)
+	if err != nil {
+		t.Fatalf("%v: %q, %v", args, out, err)
+	}
+	return out
+}
+
+func wantOut(t *testing.T, got, want string) {
+	t.Helper()
+	if got != want {
+		t.Fatalf("salida = %q, se esperaba %q", got, want)
+	}
+}
+
+func wantErr(t *testing.T, err error, want string) {
+	t.Helper()
+	if err == nil || err.Error() != want {
+		t.Fatalf("error = %v, se esperaba %q", err, want)
+	}
+}
+
+func TestEditEntry(t *testing.T) {
+	a := newApp(t)
+	a.mustRun(t, "start", "Informe", "-p", "Trabajo")
+	wantOut(t, a.mustRun(t, "edit", "1", "-t", "Informe final", "-p", "Otro", "-d", "nota"), "editado #1 Informe final\n")
+	var entry map[string]any
+	if err := json.Unmarshal([]byte(a.mustRun(t, "edit", "1", "-d", "otra", "--json")), &entry); err != nil {
+		t.Fatal(err)
+	}
+	if entry["title"] != "Informe final" || entry["project"] != "Otro" || entry["description"] != "otra" || entry["uid"] == "" {
+		t.Fatalf("edit JSON = %#v", entry)
+	}
+	_, err := a.run(t, "edit", "1", "-t", "  ")
+	wantErr(t, err, "el título no puede estar vacío")
+	_, err = a.run(t, "edit", "99", "-t", "x")
+	wantErr(t, err, "la tarea no existe")
+	_, err = a.run(t, "edit", "1")
+	wantErr(t, err, "uso: nexus edit <id> [-t título] [-p proyecto] [-d descripción] [--json]")
+}
+
+func TestRemoveRestoreAndTrash(t *testing.T) {
+	a := newApp(t)
+	a.mustRun(t, "start", "Informe", "-p", "Trabajo")
+	wantOut(t, a.mustRun(t, "trash"), "Papelera vacía\n")
+	wantOut(t, a.mustRun(t, "rm", "1"), "eliminado #1 (restaurar: nexus restore 1)\n")
+	if out := a.mustRun(t, "status"); !strings.HasPrefix(out, "En curso: sin temporizadores") {
+		t.Fatalf("el temporizador debía detenerse: %q", out)
+	}
+	if out := a.mustRun(t, "trash"); !strings.HasPrefix(out, "#1 Informe (Trabajo) · borrada ") {
+		t.Fatalf("trash = %q", out)
+	}
+	var trash []map[string]any
+	if err := json.Unmarshal([]byte(a.mustRun(t, "trash", "--json")), &trash); err != nil || len(trash) != 1 || trash[0]["title"] != "Informe" {
+		t.Fatalf("trash JSON: %v %v", trash, err)
+	}
+	wantOut(t, a.mustRun(t, "restore", "1"), "restaurado #1\n")
+	wantOut(t, a.mustRun(t, "trash"), "Papelera vacía\n")
+	wantOut(t, a.mustRun(t, "rm", "1", "--json"), "{\"ok\":true}\n")
+	_, err := a.run(t, "restore", "7")
+	wantErr(t, err, "la tarea no existe")
+	_, err = a.run(t, "rm", "abc")
+	wantErr(t, err, "id inválido «abc»")
+}
+
+func TestAdditiveEntryJSONFields(t *testing.T) {
+	a := newApp(t)
+	a.mustRun(t, "start", "Informe", "-d", "nota")
+	var status struct{ Running []map[string]any }
+	if err := json.Unmarshal([]byte(a.mustRun(t, "status", "--json")), &status); err != nil {
+		t.Fatal(err)
+	}
+	var list struct{ Running, Recent []map[string]any }
+	if err := json.Unmarshal([]byte(a.mustRun(t, "ls", "--json")), &list); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []map[string]any{status.Running[0], list.Running[0], list.Recent[0]} {
+		if e["uid"] == nil || e["uid"] == "" || e["description"] != "nota" || e["title"] != "Informe" {
+			t.Fatalf("faltan campos aditivos: %#v", e)
+		}
+	}
+}
+
+func TestOrganizationAndClientCommands(t *testing.T) {
+	a := newApp(t)
+	wantOut(t, a.mustRun(t, "org", "add", "Acme"), "organización creada #1 Acme\n")
+	wantOut(t, a.mustRun(t, "client", "add", "Globex", "-o", "acme"), "cliente creado #1 Globex\n")
+	wantOut(t, a.mustRun(t, "org", "rename", "ACME", "Acme SA"), "organización renombrada #1 Acme SA\n")
+	wantOut(t, a.mustRun(t, "client", "rename", "1", "Globex SA"), "cliente renombrado #1 Globex SA\n")
+	wantOut(t, a.mustRun(t, "client", "mv", "globex sa", "-"), "cliente movido #1 Globex SA: sin organización\n")
+	wantOut(t, a.mustRun(t, "client", "mv", "Globex SA", "1"), "cliente movido #1 Globex SA: organización «Acme SA»\n")
+	var client map[string]any
+	if err := json.Unmarshal([]byte(a.mustRun(t, "client", "add", "Initech", "--json")), &client); err != nil {
+		t.Fatal(err)
+	}
+	if client["name"] != "Initech" || client["uid"] == "" || client["organization_id"] != nil {
+		t.Fatalf("client JSON = %#v", client)
+	}
+	_, err := a.run(t, "org", "add", " ")
+	wantErr(t, err, "el nombre no puede estar vacío")
+	_, err = a.run(t, "client", "add", "X", "-o", "nada")
+	wantErr(t, err, "la organización no existe")
+	_, err = a.run(t, "client", "rename", "99", "Y")
+	wantErr(t, err, "el cliente no existe")
+	_, err = a.run(t, "org", "add", "acme sa")
+	wantErr(t, err, "ya existe una organización con ese nombre")
+}
+
+func TestProjectCommands(t *testing.T) {
+	a := newApp(t)
+	a.mustRun(t, "client", "add", "Globex")
+	wantOut(t, a.mustRun(t, "project", "add", "Web", "-c", "globex"), "proyecto creado #1 Web\n")
+	wantOut(t, a.mustRun(t, "project", "rename", "web", "Sitio"), "proyecto renombrado #1 Sitio\n")
+	wantOut(t, a.mustRun(t, "project", "mv", "Sitio", "-"), "proyecto movido #1 Sitio: sin cliente\n")
+	wantOut(t, a.mustRun(t, "project", "mv", "1", "Globex"), "proyecto movido #1 Sitio: cliente «Globex»\n")
+	wantOut(t, a.mustRun(t, "project", "archive", "Sitio"), "proyecto archivado #1 Sitio\n")
+	wantOut(t, a.mustRun(t, "project", "unarchive", "Sitio"), "proyecto desarchivado #1 Sitio\n")
+	var project map[string]any
+	if err := json.Unmarshal([]byte(a.mustRun(t, "project", "archive", "Sitio", "--json")), &project); err != nil {
+		t.Fatal(err)
+	}
+	if project["name"] != "Sitio" || project["archived"] != true || project["client_id"] != float64(1) {
+		t.Fatalf("project JSON = %#v", project)
+	}
+	a.mustRun(t, "project", "add", "App")
+	_, err := a.run(t, "project", "rename", "App", "sitio")
+	wantErr(t, err, "ya existe un proyecto con ese nombre; usa «nexus project merge» para unirlos")
+	_, err = a.run(t, "project", "merge", "App", "app", "--yes")
+	wantErr(t, err, "no se puede unir un proyecto consigo mismo")
+}
+
+func TestReferenceNameWinsOverID(t *testing.T) {
+	a := newApp(t)
+	a.mustRun(t, "project", "add", "uno")  // id 1
+	a.mustRun(t, "project", "add", "2")    // id 2, nombre numérico
+	a.mustRun(t, "project", "add", "tres") // id 3
+	a.mustRun(t, "project", "rename", "2", "dos")
+	// "2" ya no es un nombre: se resuelve por id.
+	wantOut(t, a.mustRun(t, "project", "archive", "2"), "proyecto archivado #2 dos\n")
+	a.mustRun(t, "project", "rename", "3", "1") // el proyecto #3 se llama "1"
+	// "1" coincide con el nombre del proyecto #3, que gana sobre el id 1.
+	wantOut(t, a.mustRun(t, "project", "archive", "1"), "proyecto archivado #3 1\n")
+}
+
+func TestDestructiveCommandsRequireYes(t *testing.T) {
+	a := newApp(t)
+	a.mustRun(t, "org", "add", "Acme")
+	a.mustRun(t, "client", "add", "Globex", "-o", "Acme")
+	a.mustRun(t, "project", "add", "Web", "-c", "Globex")
+	a.mustRun(t, "project", "add", "Api")
+	a.mustRun(t, "start", "Tarea", "-p", "Web")
+	before := a.mustRun(t, "tree", "--json")
+	cases := [][]string{
+		{"org", "rm", "Acme"},
+		{"client", "rm", "Globex"},
+		{"project", "rm", "Web"},
+		{"project", "merge", "Web", "Api"},
+	}
+	wants := []string{
+		"Esto eliminará la organización «Acme»; sus clientes quedarán sin organización. Repite con --yes para confirmar.",
+		"Esto eliminará el cliente «Globex»; sus proyectos quedarán sin cliente. Repite con --yes para confirmar.",
+		"Esto eliminará el proyecto «Web»; 1 tarea quedará sin proyecto. Repite con --yes para confirmar.",
+		"Esto unirá el proyecto «Web» en «Api»; 1 tarea pasará a «Api» y «Web» dejará de existir. Repite con --yes para confirmar.",
+	}
+	for i, args := range cases {
+		out, err := a.run(t, args...)
+		wantErr(t, err, wants[i])
+		wantOut(t, out, "")
+		if after := a.mustRun(t, "tree", "--json"); after != before {
+			t.Fatalf("%v modificó el catálogo sin --yes", args)
+		}
+	}
+	if out := a.mustRun(t, "status"); !strings.Contains(out, "Tarea") {
+		t.Fatalf("la tarea debía seguir en curso: %q", out)
+	}
+	out, err := a.run(t, "project", "rm", "Web", "--json")
+	if err == nil || !strings.Contains(out, `"error":"Esto eliminará el proyecto`) {
+		t.Fatalf("--json sin --yes = %q, %v", out, err)
+	}
+}
+
+func TestDestructiveCommandsWithYes(t *testing.T) {
+	a := newApp(t)
+	a.mustRun(t, "org", "add", "Acme")
+	a.mustRun(t, "client", "add", "Globex", "-o", "Acme")
+	a.mustRun(t, "project", "add", "Web", "-c", "Globex")
+	a.mustRun(t, "project", "add", "Api")
+	a.mustRun(t, "start", "Tarea", "-p", "Web")
+	wantOut(t, a.mustRun(t, "project", "merge", "Web", "Api", "--yes"), "proyecto «Web» unido en «Api»\n")
+	if out := a.mustRun(t, "ls", "--json"); !strings.Contains(out, `"project":"Api"`) {
+		t.Fatalf("la tarea debía pasar a Api: %s", out)
+	}
+	wantOut(t, a.mustRun(t, "project", "rm", "Api", "--yes"), "proyecto «Api» eliminado\n")
+	wantOut(t, a.mustRun(t, "client", "rm", "Globex", "--yes"), "cliente «Globex» eliminado\n")
+	wantOut(t, a.mustRun(t, "org", "rm", "Acme", "--yes", "--json"), "{\"ok\":true}\n")
+	_, err := a.run(t, "org", "rm", "Acme", "--yes")
+	wantErr(t, err, "la organización no existe")
+}
+
+func TestTreeText(t *testing.T) {
+	a := newApp(t)
+	a.mustRun(t, "org", "add", "Acme")
+	a.mustRun(t, "client", "add", "Globex", "-o", "Acme")
+	a.mustRun(t, "client", "add", "Suelto")
+	a.mustRun(t, "project", "add", "Web", "-c", "Globex")
+	a.mustRun(t, "project", "add", "Vieja", "-c", "Globex")
+	a.mustRun(t, "project", "add", "Libre")
+	a.mustRun(t, "project", "archive", "Vieja")
+	want := "Acme\n  Globex\n    Web\nSin organización\n  Suelto\n  Sin cliente\n    Libre\n"
+	wantOut(t, a.mustRun(t, "tree"), want)
+	want = "Acme\n  Globex\n    Vieja (archivado)\n    Web\nSin organización\n  Suelto\n  Sin cliente\n    Libre\n"
+	wantOut(t, a.mustRun(t, "tree", "--all"), want)
+}
+
+func TestTreeJSON(t *testing.T) {
+	a := newApp(t)
+	a.mustRun(t, "org", "add", "Acme")
+	a.mustRun(t, "client", "add", "Globex", "-o", "Acme")
+	a.mustRun(t, "project", "add", "Web", "-c", "Globex")
+	a.mustRun(t, "project", "add", "Libre")
+	var tree []struct {
+		Organization *struct {
+			ID   int64
+			UID  string
+			Name string
+		}
+		Clients []struct {
+			Client   *struct{ Name string }
+			Projects []struct {
+				Name     string
+				Archived bool
+			}
+		}
+	}
+	if err := json.Unmarshal([]byte(a.mustRun(t, "tree", "--json")), &tree); err != nil {
+		t.Fatal(err)
+	}
+	if len(tree) != 2 || tree[0].Organization == nil || tree[0].Organization.Name != "Acme" || tree[0].Organization.UID == "" ||
+		tree[0].Clients[0].Projects[0].Name != "Web" || tree[1].Organization != nil || tree[1].Clients[0].Client != nil || tree[1].Clients[0].Projects[0].Name != "Libre" {
+		t.Fatalf("tree JSON = %+v", tree)
+	}
+	empty := newApp(t)
+	wantOut(t, empty.mustRun(t, "tree", "--json"), "[]\n")
+	wantOut(t, empty.mustRun(t, "tree"), "Sin elementos en el catálogo\n")
+}
+
+func TestHelpAndUnknownCommand(t *testing.T) {
+	a := newApp(t)
+	out := a.mustRun(t, "help")
+	for _, want := range []string{"Temporizadores", "Tareas", "Catálogo", "nexus project merge", "nexus restore", "nexus tree"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("la ayuda no contiene %q:\n%s", want, out)
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	err := RunWithCatalog([]string{"bogus"}, a.tracker, a.catalog, &stdout, &stderr)
+	wantErr(t, err, `comando desconocido "bogus"`)
+	if !strings.Contains(stderr.String(), "Catálogo") {
+		t.Fatalf("el uso debía imprimirse en stderr: %q", stderr.String())
+	}
+}
+
+func TestCatalogUnavailable(t *testing.T) {
+	_, err := invoke(t, testTracker(t), "tree")
+	wantErr(t, err, "el catálogo no está disponible")
+}

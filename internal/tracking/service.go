@@ -147,6 +147,15 @@ func (t *Tracker) Relink(fromProjectID, toProjectID int64, toName string) error 
 	return nil
 }
 
+// CountByProject devuelve cuántas tareas vivas tiene un proyecto.
+func (t *Tracker) CountByProject(projectID int64) (int, error) {
+	n, err := t.repository.CountByProject(projectID)
+	if err != nil {
+		return 0, fmt.Errorf("count project entries: %w", err)
+	}
+	return n, nil
+}
+
 // RenameProject updates the project name stored on the entries of projectID.
 func (t *Tracker) RenameProject(projectID int64, name string) error {
 	if err := t.repository.RenameProject(projectID, name); err != nil {

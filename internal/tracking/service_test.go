@@ -104,4 +104,5 @@ func (r *memoryRepository) Purge(before int64) (int, error)    { return 0, nil }
 func (r *memoryRepository) Relink(fromID, toID int64, toName string) error {
 	return nil
 }
-func (r *memoryRepository) RenameProject(id int64, name string) error { return nil }
+func (r *memoryRepository) RenameProject(id int64, name string) error   { return nil }
+func (r *memoryRepository) CountByProject(projectID int64) (int, error) { return 0, nil }
