@@ -11,7 +11,16 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"nexus/internal/countdown"
 	"nexus/internal/tracking"
+	"nexus/internal/wellbeing"
 )
+
+// Wellbeing es la frontera mínima de pausas activas que necesita la TUI.
+type Wellbeing interface {
+	Status(time.Time) (wellbeing.Status, error)
+	UpdateSettings(wellbeing.Settings) error
+	DND(time.Time, time.Duration) error
+	ClearDND() error
+}
 
 // Breaks es la frontera mínima del módulo de breaks que necesita la TUI.
 type Breaks interface {
@@ -23,6 +32,12 @@ type Breaks interface {
 
 // WithBreaks habilita la pantalla de breaks y el indicador del encabezado.
 func WithBreaks(b Breaks) Option { return func(m *Model) { m.breaks = b } }
+
+// WithWellbeing habilita los ajustes de pausas activas en la pantalla Break.
+func WithWellbeing(w Wellbeing) Option { return func(m *Model) { m.wellbeing = w } }
+
+// WithTryPause inyecta la acción para mostrar una pausa de prueba.
+func WithTryPause(run func()) Option { return func(m *Model) { m.tryPause = run } }
 
 const (
 	breakLabel  = "Break"
@@ -71,11 +86,12 @@ func (f *breakForm) duration() time.Duration {
 
 // breakPage es el estado de la pantalla de break.
 type breakPage struct {
-	onTabs bool // el foco está en la barra de pestañas
-	action int  // botón resaltado de la tarjeta del break activo
-	form   breakForm
-	resume []string         // títulos de los temporizadores que se reanudarán al volver
-	today  []tracking.Entry // breaks de hoy, en orden de inicio
+	onTabs      bool // el foco está en la barra de pestañas
+	action      int  // botón resaltado de la tarjeta del break activo
+	form        breakForm
+	resume      []string         // títulos de los temporizadores que se reanudarán al volver
+	today       []tracking.Entry // breaks de hoy, en orden de inicio
+	settingsRow int
 }
 
 func (m *Model) initBreakPage() {
@@ -83,7 +99,7 @@ func (m *Model) initBreakPage() {
 	custom.Prompt = ""
 	custom.CharLimit = 4
 	custom.Width = 4
-	m.bp = breakPage{onTabs: true, form: breakForm{choice: defaultBreakChoice, custom: custom}}
+	m.bp = breakPage{onTabs: true, settingsRow: -1, form: breakForm{choice: defaultBreakChoice, custom: custom}}
 }
 
 func breakOverdue(b countdown.Break, now time.Time) bool { return now.Unix() >= b.EndsAt }
@@ -193,6 +209,7 @@ const (
 	brkSecMain // tarjeta del break activo, o duración y campo «Otro»
 	brkSecTimers
 	brkSecStart
+	brkSecWellbeing
 )
 
 // Tipos de celda de la pantalla de break; en brkForm el índice es la fila del formulario.
@@ -200,6 +217,7 @@ const (
 	brkTabs = iota
 	brkAction
 	brkForm
+	brkWellbeing
 )
 
 // breakGrid describe los elementos enfocables de la pantalla de break como filas.
@@ -210,21 +228,63 @@ func (m Model) breakGrid() navGrid {
 		for i := range actions {
 			actions[i] = navCell{brkAction, 0, i}
 		}
-		return append(grid, navRow{section: brkSecMain, pick: -1, cells: actions})
+		grid = append(grid, navRow{section: brkSecMain, pick: -1, cells: actions})
+	} else {
+		f := m.bp.form
+		durations := make([]navCell, len(breakDurationLabels))
+		for i := range durations {
+			durations[i] = navCell{brkForm, breakRowDuration, i}
+		}
+		grid = append(grid,
+			navRow{section: brkSecMain, pick: f.choice, cells: durations},
+			navRow{section: brkSecMain, pick: -1, cells: []navCell{{brkForm, breakRowCustom, 0}}})
+		for i := range f.timers {
+			grid = append(grid, navRow{section: brkSecTimers, pick: -1, cells: []navCell{{brkForm, breakRowFirst + i, 0}}})
+		}
+		grid = append(grid, navRow{section: brkSecStart, pick: -1, cells: []navCell{{brkForm, f.buttonsRow(), 0}}})
 	}
-	f := m.bp.form
-	durations := make([]navCell, len(breakDurationLabels))
-	for i := range durations {
-		durations[i] = navCell{brkForm, breakRowDuration, i}
+	if m.wellbeing != nil {
+		enabled := 0
+		if m.pauseStatus.Settings.Enabled {
+			enabled = 0
+		} else {
+			enabled = 1
+		}
+		every := pauseEveryIndex(m.pauseStatus.Settings.Every)
+		duration := pauseDurationIndex(m.pauseStatus.Settings.Duration)
+		grid = append(grid,
+			navRow{section: brkSecWellbeing, pick: enabled, cells: []navCell{{brkWellbeing, 0, 0}, {brkWellbeing, 0, 1}}},
+			navRow{section: brkSecWellbeing, pick: every, cells: pauseCells(1, 5)},
+			navRow{section: brkSecWellbeing, pick: duration, cells: pauseCells(2, 7)},
+			navRow{section: brkSecWellbeing, pick: -1, cells: []navCell{{brkWellbeing, 3, 0}, {brkWellbeing, 3, 1}}})
 	}
-	// Las duraciones son opciones excluyentes: ←/→ cambian la elegida.
-	grid = append(grid,
-		navRow{section: brkSecMain, pick: f.choice, cells: durations},
-		navRow{section: brkSecMain, pick: -1, cells: []navCell{{brkForm, breakRowCustom, 0}}})
-	for i := range f.timers {
-		grid = append(grid, navRow{section: brkSecTimers, pick: -1, cells: []navCell{{brkForm, breakRowFirst + i, 0}}})
+	return grid
+}
+
+func pauseCells(row, count int) []navCell {
+	cells := make([]navCell, count)
+	for i := range cells {
+		cells[i] = navCell{brkWellbeing, row, i}
 	}
-	return append(grid, navRow{section: brkSecStart, pick: -1, cells: []navCell{{brkForm, f.buttonsRow(), 0}}})
+	return cells
+}
+
+func pauseEveryIndex(d time.Duration) int {
+	for i, minutes := range []time.Duration{10, 20, 30, 45, 60} {
+		if d == minutes*time.Minute {
+			return i
+		}
+	}
+	return 2
+}
+
+func pauseDurationIndex(d time.Duration) int {
+	for i, duration := range []time.Duration{10 * time.Second, 15 * time.Second, 20 * time.Second, 30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute} {
+		if d == duration {
+			return i
+		}
+	}
+	return 3
 }
 
 // breakCell es la celda que corresponde al foco actual.
@@ -233,6 +293,10 @@ func (m Model) breakCell() navCell {
 	switch {
 	case p.onTabs:
 		return navCell{brkTabs, 0, 0}
+	case m.brk != nil && p.settingsRow < 0:
+		return navCell{brkAction, 0, p.action}
+	case p.settingsRow >= 0 && m.wellbeing != nil:
+		return navCell{brkWellbeing, p.settingsRow, p.action}
 	case m.brk != nil:
 		return navCell{brkAction, 0, p.action}
 	case p.form.row == breakRowDuration:
@@ -245,6 +309,9 @@ func (m Model) breakCell() navCell {
 func (m *Model) goToBreak(c navCell) {
 	p := &m.bp
 	p.onTabs = c.kind == brkTabs
+	if c.kind != brkWellbeing {
+		p.settingsRow = -1
+	}
 	switch c.kind {
 	case brkAction:
 		p.action = c.col
@@ -253,6 +320,10 @@ func (m *Model) goToBreak(c navCell) {
 		if c.index == breakRowDuration {
 			p.form.choice = c.col
 		}
+	case brkWellbeing:
+		p.settingsRow = c.index
+		p.action = c.col
+		p.onTabs = false
 	}
 }
 
@@ -281,11 +352,20 @@ func (m *Model) updateBreakKey(key tea.KeyMsg) tea.Cmd {
 		}
 	}
 	if nav {
+		if current.kind == brkWellbeing && (key.Type == tea.KeyLeft || key.Type == tea.KeyRight) && current.index < 3 {
+			m.goToBreak(target)
+			m.savePauseSelection(current.index, target.col)
+			return nil
+		}
 		m.goToBreak(target)
 		return nil
 	}
 	switch {
 	case p.onTabs:
+	case p.settingsRow >= 0 && m.wellbeing != nil:
+		if key.Type == tea.KeyEnter && p.settingsRow == 3 {
+			m.activateWellbeingButton(p.action)
+		}
 	case m.brk != nil:
 		if key.Type == tea.KeyEnter {
 			m.activateBreakAction(p.action)
@@ -294,6 +374,62 @@ func (m *Model) updateBreakKey(key tea.KeyMsg) tea.Cmd {
 		return m.updateBreakFormKey(key)
 	}
 	return nil
+}
+
+func (m *Model) loadWellbeing() {
+	if m.wellbeing == nil {
+		return
+	}
+	m.pauseStatus, m.pauseErr = m.wellbeing.Status(m.now)
+}
+
+func (m *Model) savePauseSelection(row, column int) {
+	if m.wellbeing == nil {
+		return
+	}
+	cfg := m.pauseStatus.Settings
+	switch row {
+	case 0:
+		cfg.Enabled = column == 0
+	case 1:
+		cfg.Every = []time.Duration{10, 20, 30, 45, 60}[column] * time.Minute
+	case 2:
+		cfg.Duration = []time.Duration{10 * time.Second, 15 * time.Second, 20 * time.Second, 30 * time.Second, time.Minute, 2 * time.Minute, 5 * time.Minute}[column]
+	}
+	if cfg == m.pauseStatus.Settings {
+		return
+	}
+	if err := m.wellbeing.UpdateSettings(cfg); err != nil {
+		m.setMessage("No se pudieron guardar las pausas activas")
+		return
+	}
+	m.pauseStatus.Settings = cfg
+	m.pauseErr = nil
+	m.setMessage("Guardado")
+}
+
+func (m *Model) activateWellbeingButton(button int) {
+	if m.wellbeing == nil {
+		return
+	}
+	if button == 0 {
+		var err error
+		if m.pauseStatus.DNDUntil != nil && m.pauseStatus.DNDUntil.After(m.now) {
+			err = m.wellbeing.ClearDND()
+		} else {
+			err = m.wellbeing.DND(m.now, time.Hour)
+		}
+		if err != nil {
+			m.setMessage("No se pudo actualizar No molestar")
+			return
+		}
+		m.loadWellbeing()
+		m.setMessage("Guardado")
+		return
+	}
+	if m.tryPause != nil {
+		go m.tryPause()
+	}
 }
 
 // updateBreakFormKey procesa Enter y el texto del campo «Otro» en el formulario de inicio.
@@ -416,6 +552,22 @@ func (m *Model) updateBreakMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	for i, zone := range l.actions {
 		if zone.contains(x, y) {
 			m.activateBreakAction(i)
+			return *m, nil
+		}
+	}
+	for row, zones := range l.pauseOptions {
+		for col, zone := range zones {
+			if zone.contains(x, y) {
+				m.bp.onTabs, m.bp.settingsRow, m.bp.action = false, row, col
+				m.savePauseSelection(row, col)
+				return *m, nil
+			}
+		}
+	}
+	for i, zone := range l.pauseButtons {
+		if zone.contains(x, y) {
+			m.bp.onTabs, m.bp.settingsRow, m.bp.action = false, 3, i
+			m.activateWellbeingButton(i)
 			return *m, nil
 		}
 	}

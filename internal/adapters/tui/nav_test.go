@@ -26,11 +26,21 @@ func TestNavGridVerticalKeepsNearestColumn(t *testing.T) {
 	if got := g.vertical(navCell{3, 0, 0}, 1); got != (navCell{4, 0, 1}) {
 		t.Fatalf("↓ a una fila radio = %+v", got)
 	}
-	if got := g.vertical(navCell{4, 0, 1}, 1); got != (navCell{5, 0, 1}) {
-		t.Fatalf("↓ conserva la columna = %+v", got)
+	if got := g.vertical(navCell{4, 0, 1}, 1); got != (navCell{5, 0, 0}) {
+		t.Fatalf("↓ desde selección a botón = %+v", got)
 	}
 	if got := g.vertical(navCell{5, 0, 2}, -1); got != (navCell{4, 0, 1}) {
-		t.Fatalf("↑ = %+v", got)
+		t.Fatalf("↑ a una fila de selección = %+v", got)
+	}
+	buttons := navGrid{
+		{pick: -1, cells: []navCell{{5, 0, 0}, {5, 0, 1}, {5, 0, 2}}},
+		{pick: -1, cells: []navCell{{5, 1, 0}, {5, 1, 1}, {5, 1, 2}}},
+	}
+	if got := buttons.vertical(navCell{5, 0, 2}, 1); got != (navCell{5, 1, 2}) {
+		t.Fatalf("↓ entre filas del mismo tipo conserva la columna = %+v", got)
+	}
+	if got := buttons.vertical(navCell{5, 1, 1}, -1); got != (navCell{5, 0, 1}) {
+		t.Fatalf("↑ entre filas del mismo tipo conserva la columna = %+v", got)
 	}
 	if got := g.vertical(navCell{5, 0, 2}, 1); got != (navCell{5, 0, 2}) {
 		t.Fatalf("↓ en la última fila no se mueve: %+v", got)

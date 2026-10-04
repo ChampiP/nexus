@@ -11,6 +11,7 @@ import (
 	"nexus/internal/catalog"
 	"nexus/internal/countdown"
 	"nexus/internal/tracking"
+	"nexus/internal/wellbeing"
 )
 
 type focusTarget int
@@ -62,6 +63,10 @@ type Model struct {
 	screen          screen
 	cat             catalogState
 	breaks          Breaks
+	wellbeing       Wellbeing
+	tryPause        func()
+	pauseStatus     wellbeing.Status
+	pauseErr        error
 	brk             *countdown.Break
 	bp              breakPage
 	wasOverdue      bool
@@ -131,6 +136,7 @@ func (m *Model) refresh() {
 		m.recent = stopped[:min(len(stopped), recentRows)]
 	}
 	m.totals, _ = m.tracker.Report(rangeStart(m.now, m.week))
+	m.loadWellbeing()
 	m.loadCatalog()
 	m.loadBreak()
 	m.clampFocus()

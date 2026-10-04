@@ -51,9 +51,40 @@ func run(args []string) error {
 		return runDaemon(breaks, activePauses)
 	}
 	if len(args) == 0 {
-		return tui.Run(tracker, catalogService, breaks)
+		return tui.Run(tracker, catalogService, breaks, tui.WithWellbeing(activePauses), tui.WithTryPause(func() {
+			if err := showPauseNow(activePauses); err != nil {
+				fmt.Fprintln(os.Stderr, "nexus: no se pudo mostrar la pausa:", err)
+			}
+		}))
 	}
 	return cli.RunWithOptions(args, tracker, cli.Options{Catalog: catalogService, Breaks: breaks, Wellbeing: activePauses, Presenter: wellbeingPresenter{}}, os.Stdout, os.Stderr)
+}
+
+func showPauseNow(service *wellbeing.Service) error {
+	now := time.Now()
+	reminder, ok := service.Due(now)
+	if !ok {
+		settings, err := service.Settings()
+		if err != nil {
+			return err
+		}
+		reminder = wellbeing.Reminder{Duration: settings.Duration, Message: "Es momento de moverte un poco.", Tip: "Ponte de pie y estira la espalda."}
+	}
+	if err := service.MarkShown(now); err != nil {
+		return err
+	}
+	result, err := (wellbeingPresenter{}).Show(context.Background(), reminder)
+	if err != nil {
+		return err
+	}
+	switch result {
+	case "snooze":
+		return service.Snooze(now, 10*time.Minute)
+	case "skip":
+		return service.Skip(now)
+	default:
+		return service.Done(now)
+	}
 }
 
 // runDaemon corre el bucle de avisos hasta recibir SIGINT o SIGTERM; solo permite una instancia.

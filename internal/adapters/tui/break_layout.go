@@ -1,6 +1,11 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"time"
+
+	"github.com/charmbracelet/lipgloss"
+	"nexus/internal/wellbeing"
+)
 
 // breakDurationX es el ancho de «▸ Duración  » antes de los botones de duración.
 const breakDurationX = 12
@@ -10,16 +15,19 @@ const breakCardLines = 7
 
 // breakLayout reúne las coordenadas de la pantalla de break; dibujo y ratón la comparten.
 type breakLayout struct {
-	tabs      []rect
-	headingY  int
-	cardY     int // borde superior del recuadro
-	actions   []rect
-	durations []rect
-	custom    rect
-	checks    []rect
-	start     rect
-	todayY    int // encabezado «BREAKS DE HOY»
-	shown     int // breaks de hoy visibles; los más recientes
+	tabs         []rect
+	headingY     int
+	cardY        int // borde superior del recuadro
+	actions      []rect
+	durations    []rect
+	custom       rect
+	checks       []rect
+	start        rect
+	todayY       int // encabezado «BREAKS DE HOY»
+	shown        int // breaks de hoy visibles; los más recientes
+	pauseY       int
+	pauseOptions [3][]rect
+	pauseButtons []rect
 }
 
 // breakLayout calcula las posiciones a partir del estado.
@@ -53,10 +61,29 @@ func (m Model) breakLayout() breakLayout {
 	l.todayY = l.cardY + content + 2 + 1
 	l.shown = len(m.bp.today)
 	if m.height > 0 {
-		// Se reservan el encabezado, la línea de total y las tres líneas del pie.
-		l.shown = min(l.shown, max(1, m.height-l.todayY-5))
+		reserve := 5
+		if m.wellbeing != nil {
+			reserve = 13
+		}
+		l.shown = min(l.shown, max(1, m.height-l.todayY-reserve))
+	}
+	if m.wellbeing != nil {
+		todayLines := len(m.todayLines(l))
+		l.pauseY = l.todayY + 1 + todayLines + 1
+		l.pauseOptions[0] = buttonRects(l.pauseY+3, recentContentX+19, []string{"Sí", "No"})
+		l.pauseOptions[1] = buttonRects(l.pauseY+4, recentContentX+14, []string{"10 min", "20 min", "30 min", "45 min", "60 min"})
+		l.pauseOptions[2] = buttonRects(l.pauseY+5, recentContentX+14, []string{"10 s", "15 s", "20 s", "30 s", "1 min", "2 min", "5 min"})
+		l.pauseButtons = buttonRects(l.pauseY+6, recentContentX, pauseButtonLabels(m.pauseStatus, m.now))
 	}
 	return l
+}
+
+func pauseButtonLabels(status wellbeing.Status, now time.Time) []string {
+	label := "No molestar 1 hora"
+	if status.DNDUntil != nil && status.DNDUntil.After(now) {
+		label = "Quitar no molestar"
+	}
+	return []string{label, "Probar ahora"}
 }
 
 // fillBreakIndicator ubica el indicador de break al final del encabezado de Temporizadores.

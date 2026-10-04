@@ -43,14 +43,21 @@ func (g navGrid) landing(r, col int) navCell {
 	return line.cells[min(col, len(line.cells)-1)]
 }
 
-// vertical pasa a la fila anterior o siguiente conservando la columna más cercana.
+// vertical pasa a la fila anterior o siguiente; conserva la columna entre filas del mismo tipo.
 func (g navGrid) vertical(c navCell, step int) navCell {
 	if len(g) == 0 {
 		return c
 	}
 	r, col := g.locate(c)
-	r = min(max(r+step, 0), len(g)-1)
-	return g.landing(r, col)
+	target := min(max(r+step, 0), len(g)-1)
+	line := g[target]
+	if line.pick >= 0 {
+		return line.cells[line.pick]
+	}
+	if g[r].pick < 0 && line.cells[0].kind == c.kind {
+		return line.cells[min(col, len(line.cells)-1)]
+	}
+	return line.cells[0]
 }
 
 // horizontal pasa al vecino de la misma fila; en los bordes no se mueve ni envuelve.

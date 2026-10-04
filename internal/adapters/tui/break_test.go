@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"nexus/internal/countdown"
 	"nexus/internal/tracking"
+	"nexus/internal/wellbeing"
 )
 
 // fakeBreaks registra las llamadas que la TUI hace al servicio de breaks.
@@ -59,6 +60,30 @@ func click(t *testing.T, m Model, r rect) Model {
 	return updateMouse(t, m, tea.MouseMsg{X: r.x, Y: r.y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 }
 
+type fakeWellbeing struct {
+	status                                 wellbeing.Status
+	updates                                []wellbeing.Settings
+	dndCalls, clearCalls                   int
+	statusErr, updateErr, dndErr, clearErr error
+}
+
+func (f *fakeWellbeing) Status(time.Time) (wellbeing.Status, error) { return f.status, f.statusErr }
+func (f *fakeWellbeing) UpdateSettings(s wellbeing.Settings) error {
+	f.updates = append(f.updates, s)
+	return f.updateErr
+}
+func (f *fakeWellbeing) DND(now time.Time, duration time.Duration) error {
+	f.dndCalls++
+	until := now.Add(duration)
+	f.status.DNDUntil = &until
+	return f.dndErr
+}
+func (f *fakeWellbeing) ClearDND() error {
+	f.clearCalls++
+	f.status.DNDUntil = nil
+	return f.clearErr
+}
+
 func activeBreak(endsIn time.Duration) *countdown.Break {
 	now := time.Now()
 	return &countdown.Break{Label: "Break", StartedAt: now.Unix(), EndsAt: now.Add(endsIn).Unix()}
@@ -91,6 +116,158 @@ func screenLine(t *testing.T, view string, x, y int) string {
 		return ""
 	}
 	return string(runes[x:])
+}
+
+func TestActivePauseSettingsRenderAndStatusVariants(t *testing.T) {
+	now := time.Date(2026, 3, 4, 15, 0, 0, 0, time.Local)
+	cases := []struct {
+		name   string
+		status wellbeing.Status
+		want   string
+	}{
+		{"activadas", wellbeing.Status{Settings: wellbeing.Settings{Enabled: true, Every: 30 * time.Minute, Duration: 30 * time.Second}, NextDue: now.Add(40 * time.Minute), Counters: wellbeing.Counters{Done: 3, Skipped: 1}}, "Activadas · cada 30 min · 30 s · próxima a las 15:40"},
+		{"desactivadas", wellbeing.Status{Settings: wellbeing.Settings{Enabled: false, Every: 30 * time.Minute, Duration: 30 * time.Second}}, "Desactivadas"},
+		{"no molestar", wellbeing.Status{Settings: wellbeing.Settings{Enabled: true}, DNDUntil: ptrTime(now.Add(time.Hour))}, "No molestar hasta las 16:00"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			service := &fakeWellbeing{status: tc.status}
+			m := breakModel(&testStore{}, &fakeBreaks{})
+			m.wellbeing, m.now = service, now
+			m.loadWellbeing()
+			m.screen = screenBreak
+			view := m.View()
+			if !strings.Contains(view, tc.want) || !strings.Contains(view, "Hoy: 3 hechas · 1 saltada") && tc.name == "activadas" {
+				t.Fatalf("vista sin estado o contadores esperados:\n%s", view)
+			}
+		})
+	}
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }
+
+func TestActivePauseSelectionSavesAndButtonsWork(t *testing.T) {
+	service := &fakeWellbeing{status: wellbeing.Status{Settings: wellbeing.Settings{Enabled: true, Every: 30 * time.Minute, Duration: 30 * time.Second}}}
+	called := make(chan struct{}, 1)
+	m := breakModel(&testStore{}, &fakeBreaks{})
+	m.wellbeing = service
+	m.loadWellbeing()
+	m.tryPause = func() { called <- struct{}{} }
+	m.screen = screenBreak
+	m.bp.onTabs = false
+	m.bp.settingsRow = 1
+	m.updateBreakKey(tea.KeyMsg{Type: tea.KeyRight})
+	if len(service.updates) != 1 || service.updates[0].Every != 20*time.Minute {
+		t.Fatalf("updates = %+v", service.updates)
+	}
+	m.bp.settingsRow, m.bp.action = 0, 0
+	m.updateBreakKey(tea.KeyMsg{Type: tea.KeyRight})
+	if len(service.updates) != 2 || service.updates[1].Enabled {
+		t.Fatalf("la selección no debe guardar un valor distinto: %+v", service.updates)
+	}
+	m.activateWellbeingButton(1)
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("Probar ahora no llamó a la función inyectada")
+	}
+}
+
+func TestActivePauseOptionsNavigationClicksAndDND(t *testing.T) {
+	now := time.Date(2026, 3, 4, 15, 0, 0, 0, time.Local)
+	service := &fakeWellbeing{status: wellbeing.Status{Settings: wellbeing.Settings{Enabled: true, Every: 45 * time.Minute, Duration: 15 * time.Second}, NextDue: now.Add(time.Hour)}}
+	called := make(chan struct{}, 1)
+	m := breakModel(&testStore{}, &fakeBreaks{})
+	m.wellbeing, m.now = service, now
+	m.tryPause = func() { called <- struct{}{} }
+	m.loadWellbeing()
+	m.screen, m.bp.onTabs = screenBreak, false
+	view := m.View()
+	for _, text := range []string{"[Sí]", "[No]", "[10 min] [20 min] [30 min] [45 min] [60 min]", "[10 s] [15 s] [20 s] [30 s] [1 min] [2 min] [5 min]", "45 min", "15 s"} {
+		if !strings.Contains(view, text) {
+			t.Errorf("falta %q:\n%s", text, view)
+		}
+	}
+	layout := m.breakLayout()
+	if !strings.HasPrefix(screenLine(t, view, layout.pauseOptions[1][3].x, layout.pauseOptions[1][3].y), "[45 min]") {
+		t.Fatalf("hit-test Cada no coincide con la vista:\n%s", view)
+	}
+	m = click(t, m, layout.pauseOptions[1][1])
+	if len(service.updates) != 1 || service.updates[0].Every != 20*time.Minute {
+		t.Fatalf("clic Cada guardó %+v", service.updates)
+	}
+	layout = m.breakLayout()
+	m = click(t, m, layout.pauseOptions[2][2])
+	if len(service.updates) != 2 || service.updates[1].Duration != 20*time.Second {
+		t.Fatalf("clic Dura guardó %+v", service.updates)
+	}
+	layout = m.breakLayout()
+	m = click(t, m, layout.pauseButtons[0])
+	if service.dndCalls != 1 || !strings.HasPrefix(pauseButtonLabels(service.status, now)[0], "Quitar") {
+		t.Fatalf("No molestar no se activó: %+v", service)
+	}
+	m = click(t, m, m.breakLayout().pauseButtons[0])
+	if service.clearCalls != 1 || service.status.DNDUntil != nil {
+		t.Fatalf("No molestar no se quitó: %+v", service)
+	}
+	m = click(t, m, m.breakLayout().pauseButtons[1])
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("el clic en Probar ahora no llamó a la función inyectada")
+	}
+}
+
+func TestActivePauseDurationMovesToFirstButtonWithoutActivatingIt(t *testing.T) {
+	service := &fakeWellbeing{status: wellbeing.Status{Settings: wellbeing.Settings{Enabled: true, Every: 30 * time.Minute, Duration: 15 * time.Second}}}
+	called := make(chan struct{}, 1)
+	m := breakModel(&testStore{}, &fakeBreaks{})
+	m.wellbeing = service
+	m.loadWellbeing()
+	m.screen, m.bp.onTabs = screenBreak, false
+	m.tryPause = func() { called <- struct{}{} }
+	m.goToBreak(navCell{brkWellbeing, 2, 1})
+
+	m = pressKeys(t, m, tea.KeyDown)
+	if m.bp.settingsRow != 3 || m.bp.action != 0 {
+		t.Fatalf("↓ desde Dura 15 s enfocó la fila %d, botón %d; quería No molestar 1 hora", m.bp.settingsRow, m.bp.action)
+	}
+	if service.dndCalls != 0 || service.clearCalls != 0 || len(service.updates) != 0 {
+		t.Fatalf("↓ activó una acción: %+v", service)
+	}
+	select {
+	case <-called:
+		t.Fatal("↓ activó Probar ahora")
+	default:
+	}
+}
+
+func TestActivePauseRowsNavigateAsOwnSection(t *testing.T) {
+	service := &fakeWellbeing{status: wellbeing.Status{Settings: wellbeing.Settings{Enabled: true, Every: 30 * time.Minute, Duration: 30 * time.Second}}}
+	m := breakModel(&testStore{}, &fakeBreaks{})
+	m.wellbeing = service
+	m.loadWellbeing()
+	m.screen = screenBreak
+	m = pressKeys(t, m, tea.KeyPgDown, tea.KeyPgDown, tea.KeyPgDown)
+	if m.bp.settingsRow != 0 || m.breakCell().kind != brkWellbeing {
+		t.Fatalf("PgDn no llegó a Pausas activas: %+v", m.bp)
+	}
+	m = pressKeys(t, m, tea.KeyDown)
+	if m.bp.settingsRow != 1 {
+		t.Fatalf("↓ no avanzó a Cada: row=%d", m.bp.settingsRow)
+	}
+	m = pressKeys(t, m, tea.KeyDown)
+	if m.bp.settingsRow != 2 {
+		t.Fatalf("↓ no avanzó a Dura: row=%d", m.bp.settingsRow)
+	}
+	m = pressKeys(t, m, tea.KeyUp)
+	if m.bp.settingsRow != 1 {
+		t.Fatalf("↑ no volvió a Cada: row=%d", m.bp.settingsRow)
+	}
+	m = pressKeys(t, m, tea.KeyPgUp)
+	if m.bp.settingsRow != -1 || m.breakCell().kind == brkWellbeing {
+		t.Fatalf("PgUp no salió de Pausas activas: %+v", m.bp)
+	}
 }
 
 func TestIndicatorTextRemainingAndOverdue(t *testing.T) {

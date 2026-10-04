@@ -27,6 +27,20 @@ func (m Model) breakView() string {
 	}
 	lines[l.todayY] = titleStyle.Render("BREAKS DE HOY")
 	lines = append(lines, m.todayLines(l)...)
+	if m.wellbeing != nil {
+		for len(lines) <= l.pauseY {
+			lines = append(lines, "")
+		}
+		box := panel.Width(max(30, m.width-2)).Render(strings.Join(m.activePauseLines(), "\n"))
+		for i, line := range strings.Split(box, "\n") {
+			y := l.pauseY + i
+			if y < len(lines) {
+				lines[y] = line
+			} else {
+				lines = append(lines, line)
+			}
+		}
+	}
 	footer := m.breakHint()
 	if m.message != "" {
 		footer = lipgloss.NewStyle().Foreground(accent).Render(m.message) + "\n" + footer
@@ -120,12 +134,70 @@ func (m Model) todayLines(l breakLayout) []string {
 	return append(lines, titleStyle.Render("Total "+formatDuration(total)))
 }
 
+func (m Model) activePauseLines() []string {
+	status := "Desactivadas"
+	cfg := m.pauseStatus.Settings
+	switch {
+	case m.pauseErr != nil:
+		status = "No se pudo cargar el estado de las pausas activas"
+	case m.pauseStatus.DNDUntil != nil && m.pauseStatus.DNDUntil.After(m.now):
+		status = "No molestar hasta las " + m.pauseStatus.DNDUntil.Format("15:04")
+	case cfg.Enabled:
+		status = fmt.Sprintf("Activadas · cada %d min · %s · próxima a las %s", int(cfg.Every/time.Minute), pauseDurationText(cfg.Duration), m.pauseStatus.NextDue.Format("15:04"))
+	}
+	counters := m.pauseStatus.Counters
+	enabled := 1
+	if cfg.Enabled {
+		enabled = 0
+	}
+	focusRow := func(row int) bool { return !m.bp.onTabs && m.bp.settingsRow == row }
+	return []string{
+		titleStyle.Render("PAUSAS ACTIVAS"),
+		status + fmt.Sprintf(" · Hoy: %d hechas · %d saltada%s", counters.Done, counters.Skipped, pluralSuffix(counters.Skipped)),
+		pauseRowPrefix("Activar", focusRow(0)) + "     " + renderButtons([]string{"Sí", "No"}, enabled),
+		pauseRowPrefix("Cada", focusRow(1)) + renderButtons([]string{"10 min", "20 min", "30 min", "45 min", "60 min"}, pauseEveryIndex(cfg.Every)),
+		pauseRowPrefix("Dura", focusRow(2)) + renderButtons([]string{"10 s", "15 s", "20 s", "30 s", "1 min", "2 min", "5 min"}, pauseDurationIndex(cfg.Duration)),
+		renderButtons(pauseButtonLabels(m.pauseStatus, m.now), pauseSelected(m.bp)),
+	}
+}
+
+func pluralSuffix(count int) string {
+	if count == 1 {
+		return ""
+	}
+	return "s"
+}
+
+func pauseRowPrefix(name string, focused bool) string {
+	mark := "  "
+	if focused {
+		mark = "▸ "
+	}
+	return mark + fmt.Sprintf("%-12s", name)
+}
+
+func pauseDurationText(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%d s", int(d/time.Second))
+	}
+	return fmt.Sprintf("%d min", int(d/time.Minute))
+}
+
+func pauseSelected(page breakPage) int {
+	if page.settingsRow == 3 && !page.onTabs {
+		return page.action
+	}
+	return -1
+}
+
 func (m Model) breakHint() string {
 	switch {
 	case m.bp.onTabs:
 		return "←→ o Enter cambiar de pantalla · ↓ continuar · Esc volver · clic en una pestaña"
+	case m.bp.settingsRow >= 0 && m.wellbeing != nil:
+		return "↑↓ mover · ←→ cambiar y guardar · Enter ejecutar · PgUp/PgDn sección · Esc volver · clic en un control"
 	case m.brk != nil:
 		return "←→ elegir acción · Enter ejecutar · ↑ pestañas · Esc volver · clic en un botón"
 	}
-	return "↑↓ mover · ←→ elegir duración · Enter marcar o empezar · Esc volver · clic en un control"
+	return "↑↓ mover · ←→ elegir duración · PgUp/PgDn sección · Enter marcar o empezar · Esc volver · clic en un control"
 }
