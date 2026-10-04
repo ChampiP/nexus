@@ -37,7 +37,7 @@ func (m Model) View() string {
 	lines[4] = label.Render("Proyecto")
 	projectField := m.inputs[1].View()
 	if !m.pickerOpen {
-		project := m.selectedProject
+		project := m.selectedProjectPath()
 		if project == "" {
 			project = "Sin proyecto"
 		}

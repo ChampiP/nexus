@@ -632,19 +632,25 @@ func TestTimerPickerListsCatalogOnlyProjectsWithClient(t *testing.T) {
 	m = press(t, m, tea.KeyDown) // título → proyecto
 	m = press(t, m, tea.KeyEnter)
 	view := m.View()
-	for _, text := range []string{"Depiloto · Depilab  ·  1:20:00", "Lumirecon · Depilab  ·  0:00:00", "web suelto  ·  0:00:00"} {
+	for _, text := range []string{"Depiloto  ·  1:20:00", "Lumirecon  ·  0:00:00"} {
 		if !strings.Contains(view, text) {
 			t.Errorf("el selector no contiene %q:\n%s", text, view)
 		}
 	}
 	m = typeText(t, m, "depilab")
 	options := m.projectOptions()
-	if len(options) < 2 || options[0].name != "Depiloto" || options[1].name != "Lumirecon" {
+	var found []string
+	for _, option := range options {
+		if option.selectable && !option.create {
+			found = append(found, option.name)
+		}
+	}
+	if len(found) != 2 || found[0] != "Depiloto" || found[1] != "Lumirecon" {
 		t.Fatalf("la búsqueda por cliente falló: %+v", options)
 	}
 	m.inputs[1].SetValue("zzz nuevo")
 	options = m.projectOptions()
-	if last := options[len(options)-1]; !last.create || projectOptionLabel(last) != "Crear «zzz nuevo»" {
+	if last := options[len(options)-1]; !last.create || projectOptionLabel(last) != "Crear «zzz nuevo» sin cliente" {
 		t.Fatalf("debía ofrecer crear: %+v", options)
 	}
 }
@@ -660,5 +666,114 @@ func TestEditPickerAlsoUsesCatalog(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("el selector debía incluir el proyecto del catálogo sin tareas")
+	}
+}
+
+func TestPickerShowsPathGroupsSearchAndSkipsHeaders(t *testing.T) {
+	m := NewModel(&testStore{projects: []tracking.ProjectUsage{{Name: "Depiloto"}}}, WithCatalog(newFakeCatalog()))
+	m.selectedProject = "Depiloto"
+	m.width = 100
+	if !strings.Contains(m.View(), "‹ Holinsys › Depilab › Depiloto ›") {
+		t.Fatalf("falta la ruta completa del proyecto:\n%s", m.View())
+	}
+	m.focus, m.pickerOpen = focusProject, true
+	m.inputs[1].SetValue("holinsys")
+	options := m.projectOptions()
+	foundOrg, foundClient, foundProject := false, false, false
+	for _, option := range options {
+		foundOrg = foundOrg || option.header && option.name == "Holinsys"
+		foundClient = foundClient || option.header && option.name == "Depilab"
+		foundProject = foundProject || option.name == "Depiloto" && option.selectable
+	}
+	if !foundOrg || !foundClient || !foundProject {
+		t.Fatalf("la búsqueda por organización debe conservar encabezados y proyecto: %+v", options)
+	}
+	m.pickerIndex = 1
+	m.movePicker(1)
+	if !options[m.pickerIndex].selectable {
+		t.Fatalf("↓ enfocó un encabezado: índice=%d opción=%+v", m.pickerIndex, options[m.pickerIndex])
+	}
+}
+
+func TestPickerCreateUnderClientOrWithoutClientAndMouseHeaders(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		choose     int
+		wantCall   string
+		wantClient string
+	}{
+		{name: "cliente", choose: 0, wantCall: "CreateProject Nueva 1", wantClient: "Depilab"},
+		{name: "sin cliente", choose: 1, wantCall: "CreateProject Nueva 0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newFakeCatalog()
+			m := NewModel(&testStore{}, WithCatalog(fake))
+			m.focus, m.pickerOpen = focusProject, true
+			m.inputs[1].SetValue("Nueva")
+			options := m.projectOptions()
+			create := make([]projectOption, 0)
+			for _, option := range options {
+				if option.create {
+					create = append(create, option)
+				}
+			}
+			wantLabel := "Crear «Nueva» en Depilab"
+			if tc.choose == 1 {
+				wantLabel = "Crear «Nueva» sin cliente"
+			}
+			if len(create) != 2 || projectOptionLabel(create[tc.choose]) != wantLabel {
+				t.Fatalf("opciones de creación = %+v", create)
+			}
+			m.pickerIndex = indexOfOption(options, create[tc.choose])
+			m = press(t, m, tea.KeyEnter)
+			if m.selectedProject != "Nueva" || len(fake.calls) != 1 || fake.calls[0] != tc.wantCall {
+				t.Fatalf("proyecto=%q llamadas=%v", m.selectedProject, fake.calls)
+			}
+			if tc.wantClient != "" && create[tc.choose].client != tc.wantClient {
+				t.Fatalf("cliente = %q", create[tc.choose].client)
+			}
+		})
+	}
+}
+
+func indexOfOption(options []projectOption, target projectOption) int {
+	for i, option := range options {
+		if option.create && option.clientID == target.clientID {
+			return i
+		}
+	}
+	return -1
+}
+
+func TestPickerMouseIgnoresHeadersAndSelectsProject(t *testing.T) {
+	m := NewModel(&testStore{}, WithCatalog(newFakeCatalog()))
+	m.focus, m.pickerOpen = focusProject, true
+	m.width, m.height = 100, 40
+	options := m.projectOptions()
+	layout := m.computeLayout()
+	header := -1
+	project := -1
+	for i, option := range options {
+		if option.header && header < 0 {
+			header = i
+		}
+		if option.selectable && option.name == "Depiloto" {
+			project = i
+		}
+	}
+	before := m.pickerIndex
+	m = clickAt(t, m, layout.options[header])
+	if !m.pickerOpen {
+		t.Fatal("clic en encabezado no debe cerrar la lista")
+	}
+	// Un encabezado no es una opción: el clic no debe mover el resaltado.
+	if m.pickerIndex != before {
+		t.Fatalf("clic en encabezado movió el resaltado de %d a %d", before, m.pickerIndex)
+	}
+	layout = m.computeLayout()
+	m.pickerIndex = project
+	m = clickAt(t, m, layout.options[project])
+	if m.pickerOpen || m.selectedProject != "Depiloto" {
+		t.Fatalf("clic en proyecto: abierto=%v proyecto=%q", m.pickerOpen, m.selectedProject)
 	}
 }

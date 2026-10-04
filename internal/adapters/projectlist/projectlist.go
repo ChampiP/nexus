@@ -14,9 +14,37 @@ import (
 type Option struct {
 	Name         string
 	Client       string
+	ClientID     int64
 	Organization string
 	LastUsed     int64
 	Seconds      int64
+}
+
+// GroupKind identifica una fila de encabezado o una opción de proyecto.
+type GroupKind int
+
+const (
+	OrganizationGroup GroupKind = iota
+	ClientGroup
+	ProjectGroup
+)
+
+func (k GroupKind) String() string {
+	switch k {
+	case OrganizationGroup:
+		return "organization"
+	case ClientGroup:
+		return "client"
+	default:
+		return "project"
+	}
+}
+
+// Group es una fila de la jerarquía; solo ProjectGroup contiene una opción seleccionable.
+type Group struct {
+	Kind   GroupKind
+	Name   string
+	Option Option
 }
 
 // Label es el nombre con el cliente cuando lo tiene: «Depiloto · Depilab».
@@ -28,7 +56,7 @@ func (o Option) Label() string {
 }
 
 // Build devuelve los proyectos no archivados del catálogo (con o sin tareas) más los proyectos
-// que solo existen como texto en las tareas, filtrados por query contra proyecto o cliente.
+// que solo existen como texto en las tareas, filtrados por query en la jerarquía.
 // Orden: usados recientemente primero; luego los nunca usados por nombre.
 func Build(tree []catalog.TreeOrganization, usage []tracking.ProjectUsage, query string) []Option {
 	used := make(map[string]tracking.ProjectUsage, len(usage))
@@ -48,6 +76,7 @@ func Build(tree []catalog.TreeOrganization, usage []tracking.ProjectUsage, query
 				option := Option{Name: project.Name, LastUsed: used[key].LastUsed, Seconds: used[key].Seconds}
 				if client.Client != nil {
 					option.Client = client.Client.Name
+					option.ClientID = client.Client.ID
 				}
 				if group.Organization != nil {
 					option.Organization = group.Organization.Name
@@ -64,7 +93,7 @@ func Build(tree []catalog.TreeOrganization, usage []tracking.ProjectUsage, query
 	query = strings.ToLower(strings.TrimSpace(query))
 	filtered := options[:0]
 	for _, option := range options {
-		if strings.Contains(strings.ToLower(option.Name), query) || strings.Contains(strings.ToLower(option.Client), query) {
+		if strings.Contains(strings.ToLower(option.Name), query) || strings.Contains(strings.ToLower(option.Client), query) || strings.Contains(strings.ToLower(option.Organization), query) {
 			filtered = append(filtered, option)
 		}
 	}
@@ -76,4 +105,78 @@ func Build(tree []catalog.TreeOrganization, usage []tracking.ProjectUsage, query
 		return strings.ToLower(a.Name) < strings.ToLower(b.Name)
 	})
 	return filtered
+}
+
+// BuildGroups devuelve filas jerárquicas y mantiene visibles los encabezados de resultados filtrados.
+// Los grupos sin organización y sin cliente aparecen al final.
+func BuildGroups(tree []catalog.TreeOrganization, usage []tracking.ProjectUsage, query string) []Group {
+	projects := Build(tree, usage, query)
+	byPath := make(map[string][]Option)
+	for _, project := range projects {
+		key := project.Organization + "\x00" + project.Client
+		byPath[key] = append(byPath[key], project)
+	}
+	var result []Group
+	for _, organization := range tree {
+		orgName := ""
+		if organization.Organization != nil {
+			orgName = organization.Organization.Name
+		}
+		if orgName == "" {
+			continue
+		}
+		orgGroups := make([]Group, 0)
+		for _, client := range organization.Clients {
+			clientName := ""
+			if client.Client != nil {
+				clientName = client.Client.Name
+			}
+			items := byPath[orgName+"\x00"+clientName]
+			if len(items) == 0 {
+				continue
+			}
+			if clientName != "" {
+				orgGroups = append(orgGroups, Group{Kind: ClientGroup, Name: clientName})
+			}
+			for _, item := range items {
+				orgGroups = append(orgGroups, Group{Kind: ProjectGroup, Name: item.Name, Option: item})
+			}
+			delete(byPath, orgName+"\x00"+clientName)
+		}
+		if len(orgGroups) > 0 {
+			result = append(result, Group{Kind: OrganizationGroup, Name: orgName})
+			result = append(result, orgGroups...)
+		}
+	}
+	var noOrg []Option
+	for key, items := range byPath {
+		if strings.HasPrefix(key, "\x00") {
+			noOrg = append(noOrg, items...)
+			delete(byPath, key)
+		}
+	}
+	// Opciones sin organización se agrupan por cliente; proyectos históricos sueltos no tienen cliente.
+	clients := map[string][]Option{}
+	for _, item := range noOrg {
+		clients[item.Client] = append(clients[item.Client], item)
+	}
+	if len(clients) > 0 {
+		result = append(result, Group{Kind: OrganizationGroup, Name: "Sin organización"})
+		clientNames := make([]string, 0, len(clients))
+		for name := range clients {
+			clientNames = append(clientNames, name)
+		}
+		sort.Strings(clientNames)
+		for _, name := range clientNames {
+			if name == "" {
+				result = append(result, Group{Kind: ClientGroup, Name: "Sin cliente"})
+			} else {
+				result = append(result, Group{Kind: ClientGroup, Name: name})
+			}
+			for _, item := range clients[name] {
+				result = append(result, Group{Kind: ProjectGroup, Name: item.Name, Option: item})
+			}
+		}
+	}
+	return result
 }

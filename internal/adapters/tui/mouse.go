@@ -78,6 +78,10 @@ func (m *Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		for i, zone := range layout.options {
 			if zone.contains(msg.X, msg.Y) {
+				// Los encabezados de organización y cliente no son seleccionables: el clic no hace nada.
+				if options := m.projectOptions(); layout.optionsStart+i < len(options) && !options[layout.optionsStart+i].selectable {
+					return m, nil
+				}
 				m.pickerIndex = layout.optionsStart + i
 				m.selectProject()
 				return m, nil

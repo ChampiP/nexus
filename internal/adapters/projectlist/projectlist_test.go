@@ -82,3 +82,29 @@ func TestLabel(t *testing.T) {
 		t.Fatalf("Label = %q", got)
 	}
 }
+
+func TestBuildGroupsOrdersAndRetainsHeadersForHierarchySearch(t *testing.T) {
+	usage := []tracking.ProjectUsage{{Name: "Depiloto", LastUsed: 10, Seconds: 90}, {Name: "Lumirecon", LastUsed: 20, Seconds: 120}}
+	for _, query := range []string{"holinsys", "depilab", "lumirecon"} {
+		t.Run(query, func(t *testing.T) {
+			groups := BuildGroups(sampleTree(), usage, query)
+			var got []string
+			for _, group := range groups {
+				got = append(got, group.Kind.String()+":"+group.Name)
+			}
+			want := []string{"organization:Holinsys", "client:Depilab"}
+			if query == "holinsys" || query == "depilab" {
+				want = append(want, "project:Lumirecon", "project:Depiloto")
+			} else {
+				want = append(want, "project:Lumirecon")
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("grupos = %v; quiero %v", got, want)
+			}
+		})
+	}
+	groups := BuildGroups(sampleTree(), usage, "suelto")
+	if len(groups) != 3 || groups[0].Name != "Sin organización" || groups[1].Name != "Sin cliente" || groups[2].Option.Name != "web suelto" {
+		t.Fatalf("grupos sin asignar = %+v", groups)
+	}
+}

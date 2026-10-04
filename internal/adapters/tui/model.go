@@ -281,6 +281,12 @@ func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
 		var cmd tea.Cmd
 		m.inputs[1], cmd = m.inputs[1].Update(key)
 		m.pickerOpen, m.pickerIndex = true, 0
+		for i, option := range m.projectOptions() {
+			if option.selectable {
+				m.pickerIndex = i
+				break
+			}
+		}
 		return cmd
 	}
 	index := m.inputIndex()
@@ -366,12 +372,16 @@ func (m *Model) movePicker(delta int) {
 	if len(options) == 0 {
 		return
 	}
-	m.pickerIndex += delta
-	if m.pickerIndex < 0 {
-		m.pickerIndex = 0
-	}
-	if m.pickerIndex >= len(options) {
-		m.pickerIndex = len(options) - 1
+	index := m.pickerIndex
+	for index >= 0 && index < len(options) {
+		index += delta
+		if index < 0 || index >= len(options) {
+			return
+		}
+		if options[index].selectable {
+			m.pickerIndex = index
+			return
+		}
 	}
 }
 

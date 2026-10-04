@@ -298,11 +298,17 @@ func TestProjectFocusShowsAllProjectsAndMarksCurrent(t *testing.T) {
 		t.Fatal("Enter should open the empty-query project list")
 	}
 	options := m.projectOptions()
-	if len(options) != 3 || options[1].name != "nexus" || options[2].name != "tbwa" {
-		t.Fatalf("empty-query options = %#v, want all projects", options)
+	var projects []string
+	for _, option := range options {
+		if option.selectable && !option.create && option.name != "Sin proyecto" {
+			projects = append(projects, option.name)
+		}
 	}
-	if m.pickerIndex != 1 {
-		t.Fatalf("highlight index = %d, want selected nexus option at 1", m.pickerIndex)
+	if len(projects) != 2 || projects[0] != "nexus" || projects[1] != "tbwa" {
+		t.Fatalf("empty-query projects = %#v, want all projects", projects)
+	}
+	if m.pickerIndex < 0 || !options[m.pickerIndex].selectable || options[m.pickerIndex].name != "nexus" {
+		t.Fatalf("highlight index = %d, want selected nexus option", m.pickerIndex)
 	}
 	if label := renderProjectOption(options[m.pickerIndex], true); !strings.Contains(label, "▸") || !strings.Contains(label, "✓") {
 		t.Fatalf("selected project option lacks visible markers: %q", label)
@@ -361,7 +367,7 @@ func TestProjectTypingReplacesPrefillAndStartUsesSelection(t *testing.T) {
 	options := m.projectOptions()
 	var matches []string
 	for _, option := range options {
-		if !option.create {
+		if option.selectable && !option.create {
 			matches = append(matches, option.name)
 		}
 	}
@@ -371,8 +377,8 @@ func TestProjectTypingReplacesPrefillAndStartUsesSelection(t *testing.T) {
 	if got := m.inputs[1].Value(); got != "tb" {
 		t.Fatalf("query = %q, want tb (not appended to nexus)", got)
 	}
-	if m.pickerIndex != 0 || options[0].name != "tbwa" || !options[len(options)-1].create {
-		t.Fatalf("existing match should be first/highlighted and create last: index=%d options=%#v", m.pickerIndex, options)
+	if !options[m.pickerIndex].selectable || options[m.pickerIndex].name != "tbwa" || !options[len(options)-1].create {
+		t.Fatalf("existing match should be highlighted and create last: index=%d options=%#v", m.pickerIndex, options)
 	}
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if got := m.inputs[1].Value(); got != "tbwa" || m.focus != focusTitle {
@@ -390,7 +396,7 @@ func TestProjectPickerEscEnterAndMouseTransitions(t *testing.T) {
 	m := NewModel(db)
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyTab})
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if !m.pickerOpen || m.pickerIndex != 1 {
+	if !m.pickerOpen || !m.projectOptions()[m.pickerIndex].selectable || m.projectOptions()[m.pickerIndex].name != "nexus" {
 		t.Fatalf("Enter should open and highlight current project: open=%v index=%d", m.pickerOpen, m.pickerIndex)
 	}
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -418,18 +424,26 @@ func TestProjectPickerCreateOrderingAndExactMatch(t *testing.T) {
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyTab})
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tb")})
 	options := m.projectOptions()
-	if len(options) != 2 || options[0].name != "tbwa" || options[0].create || !options[len(options)-1].create {
+	var matches []projectOption
+	for _, option := range options {
+		if option.selectable {
+			matches = append(matches, option)
+		}
+	}
+	if len(matches) != 2 || matches[0].name != "tbwa" || matches[0].create || !matches[len(matches)-1].create {
 		t.Fatalf("matching projects must precede create option: %#v", options)
 	}
 	m.inputs[1].SetValue("TBWA")
 	options = m.projectOptions()
-	if len(options) != 1 || options[0].create || options[0].name != "tbwa" {
-		t.Fatalf("exact case-insensitive match must not offer create: %#v", options)
+	for _, option := range options {
+		if option.create {
+			t.Fatalf("exact case-insensitive match must not offer create: %#v", options)
+		}
 	}
 	m.inputs[1].SetValue("missing")
 	options = m.projectOptions()
-	if len(options) != 1 || !options[0].create || options[0].name != "missing" {
-		t.Fatalf("no match should offer create as the only option: %#v", options)
+	if !options[len(options)-1].create || options[len(options)-1].name != "missing" {
+		t.Fatalf("no match should offer create: %#v", options)
 	}
 }
 
@@ -454,7 +468,8 @@ func TestProjectPickerFiltersSelectsAndCreates(t *testing.T) {
 	m.focusInput()
 	m.inputs[1].SetValue("")
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("Stu")})
-	if got := m.projectOptions(); len(got) != 3 || got[0].name != "Studio" || !got[len(got)-1].create {
+	got := m.projectOptions()
+	if !got[m.pickerIndex].selectable || got[m.pickerIndex].name != "Studio" || !got[len(got)-1].create {
 		t.Fatalf("filtered options = %#v", got)
 	}
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
@@ -464,7 +479,7 @@ func TestProjectPickerFiltersSelectsAndCreates(t *testing.T) {
 	m.focus = focusProject
 	m.inputs[1].SetValue("New project")
 	m.pickerOpen = true
-	m.pickerIndex = 0
+	m.pickerIndex = len(m.projectOptions()) - 1
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if m.inputs[1].Value() != "New project" || m.focus != focusTitle {
 		t.Fatalf("create selection project=%q focus=%v", m.inputs[1].Value(), m.focus)
