@@ -16,4 +16,4 @@ Non-goals: logging, pause/resume, sync.
 ## Tasks
 - [x] 1. Layered refactor + `projects` query + CLI in Spanish + --json contract (commit b92f0af)
 - [x] 2. TUI: arrows/Enter/mouse, always-ready title input, searchable project picker, visible description (commit ba3f4df)
-- [ ] 3. Bar popup panel: quick start (title + searchable project), running timers with stop buttons, open detail TUI
+- [x] 3. Bar popup panel: quick start (title + searchable project), running timers with stop buttons, open detail TUI (commit dc93563)
