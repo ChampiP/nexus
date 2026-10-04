@@ -27,5 +27,5 @@ data dir `0700` / database `0600`.
 - [x] 1b. Per-module migrations (schema_migrations), catalog schema, backfill from entries.project, automatic backup, entry uid/kind/deleted_at, data dir 0700 / db 0600 (+ tests: preservation, running timer survives, idempotency, old binary still works) (commit 828c039; verified on a copy of the real DB)
 - [x] 2. App: edit/delete entry; catalog use cases (projects, clients, organizations: create, rename, merge, move, delete) (commit 60d9d55)
 - [x] 3. CLI: edit, rm, project/client/org commands, additive JSON fields, Spanish text (commit de417c6)
-- [ ] 4. TUI: edit/delete an entry from the lists (Enter, confirmation, mouse)
+- [x] 4. TUI: edit/delete an entry from the lists (Enter, confirmation, mouse) (commit e7894cc)
 - [ ] 5. TUI: catalog screen (organization > client > project), rename/move/delete
