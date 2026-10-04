@@ -11,6 +11,14 @@ type Repository interface {
 	Recent(limit int) ([]Entry, error)
 	Totals(since, now int64) ([]ProjectTotal, error)
 	Projects(now int64) ([]ProjectUsage, error)
+	Get(id int64) (Entry, error)
+	Update(Entry) error
+	SoftDelete(id, at int64) error
+	Restore(id int64) error
+	Deleted(limit int) ([]Entry, error)
+	Purge(before int64) (int, error)
+	Relink(fromID, toID int64, toName string) error
+	RenameProject(id int64, name string) error
 }
 
 // Clock supplies the current time to Tracker.

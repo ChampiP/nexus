@@ -18,14 +18,39 @@ type StartInput struct {
 type Tracker struct {
 	repository Repository
 	clock      Clock
+	projects   ProjectResolver
+}
+
+// Option customizes a Tracker.
+type Option func(*Tracker)
+
+// WithProjects makes the Tracker link entries to catalog projects through resolver.
+func WithProjects(resolver ProjectResolver) Option {
+	return func(t *Tracker) { t.projects = resolver }
 }
 
 // NewTracker creates a Tracker using the supplied repository and clock.
-func NewTracker(repository Repository, clock Clock) *Tracker {
+func NewTracker(repository Repository, clock Clock, options ...Option) *Tracker {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &Tracker{repository: repository, clock: clock}
+	t := &Tracker{repository: repository, clock: clock}
+	for _, option := range options {
+		option(t)
+	}
+	return t
+}
+
+// resolve returns the catalog id for a project name; 0 when empty or no resolver is configured.
+func (t *Tracker) resolve(name string) (int64, error) {
+	if name == "" || t.projects == nil {
+		return 0, nil
+	}
+	id, err := t.projects.EnsureProject(name)
+	if err != nil {
+		return 0, fmt.Errorf("resolve project %q: %w", name, err)
+	}
+	return id, nil
 }
 
 // Start creates a timer after trimming and validating its title.
@@ -34,11 +59,100 @@ func (t *Tracker) Start(input StartInput) (Entry, error) {
 	if input.Title == "" {
 		return Entry{}, ErrEmptyTitle
 	}
-	entry, err := t.repository.Insert(Entry{Title: input.Title, Project: input.Project, Description: input.Description, StartedAt: t.clock().Unix()})
+	projectID, err := t.resolve(input.Project)
+	if err != nil {
+		return Entry{}, fmt.Errorf("start timer: %w", err)
+	}
+	entry, err := t.repository.Insert(Entry{Title: input.Title, Project: input.Project, ProjectID: projectID, Description: input.Description, StartedAt: t.clock().Unix()})
 	if err != nil {
 		return Entry{}, fmt.Errorf("start timer: %w", err)
 	}
 	return entry, nil
+}
+
+// EditInput holds the optional changes for Edit; nil fields are left untouched.
+type EditInput struct {
+	Title       *string
+	Project     *string
+	Description *string
+}
+
+// Edit changes a running or stopped entry. A project change updates both the name and its catalog link.
+func (t *Tracker) Edit(id int64, in EditInput) (Entry, error) {
+	entry, err := t.repository.Get(id)
+	if err != nil {
+		return Entry{}, fmt.Errorf("edit entry #%d: %w", id, err)
+	}
+	if in.Title != nil {
+		title := strings.TrimSpace(*in.Title)
+		if title == "" {
+			return Entry{}, ErrEmptyTitle
+		}
+		entry.Title = title
+	}
+	if in.Description != nil {
+		entry.Description = *in.Description
+	}
+	if in.Project != nil {
+		entry.Project = *in.Project
+		if entry.ProjectID, err = t.resolve(entry.Project); err != nil {
+			return Entry{}, fmt.Errorf("edit entry #%d: %w", id, err)
+		}
+	}
+	if err := t.repository.Update(entry); err != nil {
+		return Entry{}, fmt.Errorf("edit entry #%d: %w", id, err)
+	}
+	return entry, nil
+}
+
+// Delete soft-deletes an entry; a running one is stopped first so no timer lingers.
+func (t *Tracker) Delete(id int64) error {
+	if err := t.repository.SoftDelete(id, t.clock().Unix()); err != nil {
+		return fmt.Errorf("delete entry #%d: %w", id, err)
+	}
+	return nil
+}
+
+// Restore brings a soft-deleted entry back.
+func (t *Tracker) Restore(id int64) error {
+	if err := t.repository.Restore(id); err != nil {
+		return fmt.Errorf("restore entry #%d: %w", id, err)
+	}
+	return nil
+}
+
+// Deleted lists the trash, newest deletion first.
+func (t *Tracker) Deleted(limit int) ([]Entry, error) {
+	entries, err := t.repository.Deleted(limit)
+	if err != nil {
+		return nil, fmt.Errorf("list deleted entries: %w", err)
+	}
+	return entries, nil
+}
+
+// Purge hard-deletes entries deleted longer than olderThan ago and returns how many.
+func (t *Tracker) Purge(olderThan time.Duration) (int, error) {
+	n, err := t.repository.Purge(t.clock().Add(-olderThan).Unix())
+	if err != nil {
+		return 0, fmt.Errorf("purge deleted entries: %w", err)
+	}
+	return n, nil
+}
+
+// Relink points the entries of project fromID at toID (0 clears it) and sets their project name.
+func (t *Tracker) Relink(fromProjectID, toProjectID int64, toName string) error {
+	if err := t.repository.Relink(fromProjectID, toProjectID, toName); err != nil {
+		return fmt.Errorf("relink entries: %w", err)
+	}
+	return nil
+}
+
+// RenameProject updates the project name stored on the entries of projectID.
+func (t *Tracker) RenameProject(projectID int64, name string) error {
+	if err := t.repository.RenameProject(projectID, name); err != nil {
+		return fmt.Errorf("rename project on entries: %w", err)
+	}
+	return nil
 }
 
 // Stop ends the specified running timer.

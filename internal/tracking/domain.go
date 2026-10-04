@@ -17,6 +17,7 @@ type Entry struct {
 	Title       string
 	Description string
 	Project     string
+	ProjectID   int64 // 0 means no catalog project (NULL)
 	StartedAt   int64
 	EndedAt     *int64
 }
@@ -37,6 +38,8 @@ type ProjectUsage struct {
 var (
 	// ErrNotRunning indicates that a timer does not exist or is already stopped.
 	ErrNotRunning = errors.New("timer is not running")
+	// ErrNotFound indicates that an entry does not exist or is in the wrong deleted state.
+	ErrNotFound = errors.New("entry not found")
 	// ErrEmptyTitle indicates that a timer title is blank after trimming.
 	ErrEmptyTitle = errors.New("title cannot be empty")
 )

@@ -6,9 +6,11 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strconv"
 	"testing"
 	"time"
 
+	"nexus/internal/catalog"
 	platformdb "nexus/internal/platform/db"
 	"nexus/internal/tracking"
 )
@@ -188,5 +190,77 @@ func TestEntryFromOldBinaryIsReconciled(t *testing.T) {
 	}
 	if n := count(t, db, `SELECT COUNT(*) FROM projects`); n != 2 {
 		t.Fatalf("projects = %d", n)
+	}
+}
+
+func wiredServices(t *testing.T, now *int64) (*tracking.Tracker, *catalog.Service, *sql.DB) {
+	t.Helper()
+	db, path := legacyDB(t)
+	upgrade(t, db, path)
+	tracker, service := wire(db, func() time.Time { return time.Unix(*now, 0) })
+	return tracker, service, db
+}
+
+func TestMergeKeepsHoursAttributedToTarget(t *testing.T) {
+	now := int64(1000)
+	tracker, service, db := wiredServices(t, &now)
+	from := count(t, db, `SELECT id FROM projects WHERE name = 'nexus'`)
+	into, err := service.CreateProject("Destino", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.MergeProjects(int64(from), into.ID); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM entries WHERE title = 'stopped' AND project = 'Destino' AND project_id = `+strconv.FormatInt(into.ID, 10)); n != 1 {
+		t.Fatal("entry not moved to target")
+	}
+	totals, err := tracker.Report(time.Unix(0, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, total := range totals {
+		if total.Project == "Destino" && total.Seconds == 100 {
+			return
+		}
+	}
+	t.Fatalf("hours not attributed to target: %+v", totals)
+}
+
+func TestDeleteProjectKeepsEntriesWithoutProject(t *testing.T) {
+	now := int64(1000)
+	tracker, service, db := wiredServices(t, &now)
+	id := int64(count(t, db, `SELECT id FROM projects WHERE name = 'nexus'`))
+	if err := service.DeleteProject(id); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM entries WHERE title = 'stopped' AND project = '' AND project_id IS NULL`); n != 1 {
+		t.Fatal("entry must keep existing with empty project and NULL project_id")
+	}
+	totals, _ := tracker.Report(time.Unix(0, 0))
+	for _, total := range totals {
+		if total.Project == "" && total.Seconds >= 100 {
+			return
+		}
+	}
+	t.Fatalf("hours lost: %+v", totals)
+}
+
+func TestRenameProjectUpdatesEntriesAndNewEntriesLink(t *testing.T) {
+	now := int64(1000)
+	tracker, service, db := wiredServices(t, &now)
+	id := int64(count(t, db, `SELECT id FROM projects WHERE name = 'nexus'`))
+	if err := service.RenameProject(id, "Nexus 2"); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM entries WHERE project = 'Nexus 2' AND project_id = `+strconv.FormatInt(id, 10)); n != 1 {
+		t.Fatal("entries not renamed")
+	}
+	entry, err := tracker.Start(tracking.StartInput{Title: "n", Project: "nexus 2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM entries WHERE id = `+strconv.FormatInt(entry.ID, 10)+` AND project_id = `+strconv.FormatInt(id, 10)); n != 1 {
+		t.Fatal("new entry not linked to existing project")
 	}
 }

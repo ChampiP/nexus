@@ -125,7 +125,7 @@ func (s *SQLite) Insert(entry Entry) (Entry, error) {
 	if entry.Kind == "" {
 		entry.Kind = KindWork
 	}
-	result, err := s.db.Exec(`INSERT INTO entries(uid, kind, title, description, project, started_at) VALUES (?, ?, ?, ?, ?, ?)`, entry.UID, entry.Kind, entry.Title, entry.Description, entry.Project, entry.StartedAt)
+	result, err := s.db.Exec(`INSERT INTO entries(uid, kind, title, description, project, project_id, started_at) VALUES (?, ?, ?, ?, ?, NULLIF(?, 0), ?)`, entry.UID, entry.Kind, entry.Title, entry.Description, entry.Project, entry.ProjectID, entry.StartedAt)
 	if err != nil {
 		return Entry{}, fmt.Errorf("insert timer: %w", err)
 	}
@@ -167,7 +167,7 @@ func (s *SQLite) StopAll(endedAt int64) (int, error) {
 
 // Running returns active timers in start order.
 func (s *SQLite) Running() ([]Entry, error) {
-	return s.queryEntries(`SELECT id, COALESCE(uid, ''), kind, title, description, project, started_at, ended_at FROM entries WHERE deleted_at IS NULL AND ended_at IS NULL ORDER BY started_at, id`)
+	return s.queryEntries(`SELECT ` + entryColumns + ` FROM entries WHERE deleted_at IS NULL AND ended_at IS NULL ORDER BY started_at, id`)
 }
 
 // Recent returns the most recently started entries, newest first.
@@ -175,7 +175,7 @@ func (s *SQLite) Recent(limit int) ([]Entry, error) {
 	if limit <= 0 {
 		return []Entry{}, nil
 	}
-	return s.queryEntries(`SELECT id, COALESCE(uid, ''), kind, title, description, project, started_at, ended_at FROM entries WHERE deleted_at IS NULL ORDER BY started_at DESC, id DESC LIMIT ?`, limit)
+	return s.queryEntries(`SELECT `+entryColumns+` FROM entries WHERE deleted_at IS NULL ORDER BY started_at DESC, id DESC LIMIT ?`, limit)
 }
 
 // Totals returns project durations since the timestamp, clipped at now.
@@ -236,6 +236,84 @@ func (s *SQLite) Projects(now int64) ([]ProjectUsage, error) {
 	return projects, nil
 }
 
+const entryColumns = `id, COALESCE(uid, ''), kind, title, description, project, COALESCE(project_id, 0), started_at, ended_at`
+
+// Get returns a live (not deleted) entry or ErrNotFound.
+func (s *SQLite) Get(id int64) (Entry, error) {
+	entries, err := s.queryEntries(`SELECT `+entryColumns+` FROM entries WHERE id = ? AND deleted_at IS NULL`, id)
+	if err != nil {
+		return Entry{}, err
+	}
+	if len(entries) == 0 {
+		return Entry{}, ErrNotFound
+	}
+	return entries[0], nil
+}
+
+// Update rewrites the editable fields of a live entry.
+func (s *SQLite) Update(entry Entry) error {
+	result, err := s.db.Exec(`UPDATE entries SET title = ?, description = ?, project = ?, project_id = NULLIF(?, 0) WHERE id = ? AND deleted_at IS NULL`, entry.Title, entry.Description, entry.Project, entry.ProjectID, entry.ID)
+	return expectRow(result, err, "update entry")
+}
+
+// SoftDelete marks a live entry deleted, ending it at `at` if it was running.
+func (s *SQLite) SoftDelete(id, at int64) error {
+	result, err := s.db.Exec(`UPDATE entries SET ended_at = COALESCE(ended_at, ?), deleted_at = ? WHERE id = ? AND deleted_at IS NULL`, at, at, id)
+	return expectRow(result, err, "delete entry")
+}
+
+// Restore clears the deletion mark of a deleted entry.
+func (s *SQLite) Restore(id int64) error {
+	result, err := s.db.Exec(`UPDATE entries SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL`, id)
+	return expectRow(result, err, "restore entry")
+}
+
+// Deleted returns soft-deleted entries, most recently deleted first.
+func (s *SQLite) Deleted(limit int) ([]Entry, error) {
+	if limit <= 0 {
+		return []Entry{}, nil
+	}
+	return s.queryEntries(`SELECT `+entryColumns+` FROM entries WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC, id DESC LIMIT ?`, limit)
+}
+
+// Purge hard-deletes entries whose deleted_at is before the timestamp.
+func (s *SQLite) Purge(before int64) (int, error) {
+	result, err := s.db.Exec(`DELETE FROM entries WHERE deleted_at IS NOT NULL AND deleted_at < ?`, before)
+	if err != nil {
+		return 0, fmt.Errorf("purge entries: %w", err)
+	}
+	n, err := result.RowsAffected()
+	return int(n), err
+}
+
+// Relink moves the entries of project fromID to toID (0 clears the link) with the given name.
+func (s *SQLite) Relink(fromID, toID int64, toName string) error {
+	if _, err := s.db.Exec(`UPDATE entries SET project_id = NULLIF(?, 0), project = ? WHERE project_id = ?`, toID, toName, fromID); err != nil {
+		return fmt.Errorf("relink entries: %w", err)
+	}
+	return nil
+}
+
+// RenameProject sets the project name text on the entries of project id.
+func (s *SQLite) RenameProject(id int64, name string) error {
+	if _, err := s.db.Exec(`UPDATE entries SET project = ? WHERE project_id = ?`, name, id); err != nil {
+		return fmt.Errorf("rename project on entries: %w", err)
+	}
+	return nil
+}
+
+func expectRow(result sql.Result, err error, what string) error {
+	if err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	}
+	if n, err := result.RowsAffected(); err != nil {
+		return fmt.Errorf("%s: %w", what, err)
+	} else if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *SQLite) queryEntries(query string, args ...any) ([]Entry, error) {
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
@@ -246,7 +324,7 @@ func (s *SQLite) queryEntries(query string, args ...any) ([]Entry, error) {
 	for rows.Next() {
 		var entry Entry
 		var ended sql.NullInt64
-		if err := rows.Scan(&entry.ID, &entry.UID, &entry.Kind, &entry.Title, &entry.Description, &entry.Project, &entry.StartedAt, &ended); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.UID, &entry.Kind, &entry.Title, &entry.Description, &entry.Project, &entry.ProjectID, &entry.StartedAt, &ended); err != nil {
 			return nil, fmt.Errorf("scan entry: %w", err)
 		}
 		if ended.Valid {

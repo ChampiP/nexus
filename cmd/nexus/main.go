@@ -54,7 +54,32 @@ func openTracker(path string) (*tracking.Tracker, func() error, error) {
 		db.Close()
 		return nil, nil, err
 	}
-	return tracking.NewTracker(tracking.NewSQLite(db), time.Now), db.Close, nil
+	tracker, _ := wire(db, time.Now)
+	if _, err := tracker.Purge(trashRetention); err != nil {
+		fmt.Fprintln(os.Stderr, "nexus: no se pudo purgar la papelera:", err)
+	}
+	return tracker, db.Close, nil
+}
+
+// trashRetention is how long soft-deleted entries stay restorable.
+const trashRetention = 30 * 24 * time.Hour
+
+// wire builds the module use cases over a migrated database and connects them through their ports.
+func wire(db *sql.DB, now func() time.Time) (*tracking.Tracker, *catalog.Service) {
+	catalogRepo := catalog.NewSQLite(db)
+	tracker := tracking.NewTracker(tracking.NewSQLite(db), now, tracking.WithProjects(catalogProjects{catalogRepo}))
+	return tracker, catalog.NewService(catalogRepo, trackerEntries{tracker}, now)
+}
+
+// trackerEntries adapts tracking to the port catalog uses to keep entries' project columns in sync.
+type trackerEntries struct{ tracker *tracking.Tracker }
+
+func (t trackerEntries) Relink(fromID, toID int64, toName string) error {
+	return t.tracker.Relink(fromID, toID, toName)
+}
+
+func (t trackerEntries) RenameProject(id int64, name string) error {
+	return t.tracker.RenameProject(id, name)
 }
 
 // catalogProjects adapts the catalog to the port tracking uses to link entries to projects.
