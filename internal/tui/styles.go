@@ -27,7 +27,7 @@ func formatDuration(seconds int64) string {
 	if seconds < 0 {
 		seconds = 0
 	}
-	return fmt.Sprintf("%dh %02dm", seconds/3600, seconds/60%60)
+	return fmt.Sprintf("%d:%02d:%02d", seconds/3600, seconds/60%60, seconds%60)
 }
 func clock(seconds int64) string {
 	if seconds < 0 {

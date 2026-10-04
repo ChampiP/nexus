@@ -323,3 +323,12 @@ func updateMouse(t *testing.T, m Model, mouse tea.MouseMsg) Model {
 		return m
 	}
 }
+
+func TestFormatDurationShowsSeconds(t *testing.T) {
+	cases := map[int64]string{-5: "0:00:00", 22: "0:00:22", 3725: "1:02:05"}
+	for seconds, want := range cases {
+		if got := formatDuration(seconds); got != want {
+			t.Errorf("formatDuration(%d) = %q, want %q", seconds, got, want)
+		}
+	}
+}
