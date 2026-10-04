@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "champip.nexus-pausa",
+  "name": "Nexus · Pausa activa",
+  "version": "1.0.0",
+  "author": "champip",
+  "description": "Overlay de pantalla completa para pausas activas de Nexus",
+  "kinds": ["overlay"],
+  "entryPoints": { "overlay": "PauseOverlay.qml" }
+}

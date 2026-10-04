@@ -39,3 +39,7 @@ The plugin invokes `nexus` with Quickshell `Process` argument arrays (never a sh
 - `KeyboardPanel` only hosts `Item` children; keep `Process`/`Timer`/`Connections`
   inside an invisible `Item`.
 - Toggle from the command line with `omarchy-shell champip.nexus toggle`.
+- `omarchy-shell shell summon <id>` prints `ok` or `unknown` and always exits 0: read stdout, not the exit code.
+- `summon champip.nexus` opens the bar popup, so the pause overlay is a separate plugin (`champip.nexus-pausa`).
+- Inside `Variants`, ids of per-screen items are not visible from the root; let each item take focus itself.
+- `import "/abs/path"` is invalid in QML; use `import qs.Ui`.

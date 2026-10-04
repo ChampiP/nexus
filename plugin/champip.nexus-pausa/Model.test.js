@@ -1,0 +1,18 @@
+// Run with: node plugin/champip.nexus-pausa/Model.test.js
+const assert = require("assert")
+const Model = require("./Model.js")
+
+assert.strictEqual(Model.clampSeconds(undefined), 30)
+assert.strictEqual(Model.clampSeconds(null), 30)
+assert.strictEqual(Model.clampSeconds("30"), 30)
+assert.strictEqual(Model.clampSeconds(true), 30)
+assert.strictEqual(Model.clampSeconds(NaN), 30)
+assert.strictEqual(Model.clampSeconds(0), 5)
+assert.strictEqual(Model.clampSeconds(4.9), 5)
+assert.strictEqual(Model.clampSeconds(45.8), 45)
+assert.strictEqual(Model.clampSeconds(301), 300)
+assert.strictEqual(Model.formatCountdown(0), "0:00")
+assert.strictEqual(Model.formatCountdown(9), "0:09")
+assert.strictEqual(Model.formatCountdown(65), "1:05")
+assert.strictEqual(Model.formatCountdown(-1), "0:00")
+console.log("PauseOverlay Model.js ok")

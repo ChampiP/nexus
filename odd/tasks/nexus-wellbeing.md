@@ -14,5 +14,5 @@ Goal: configurable active-break reminder that covers the screen (docs/ARCHITECTU
 
 ## Tasks
 - [x] 1. Domain + CLI + daemon: wellbeing module (settings, schedule, snooze/skip/dnd), presence detection, daemon trigger, `nexus pausa`
-- [ ] 2. Overlay: QML overlay in the bar plugin, summoned by the daemon, reports back via CLI (needs one shell restart)
+- [x] 2. Overlay: QML overlay in the bar plugin, summoned by the daemon, reports back via CLI (needs one shell restart)
 - [ ] 3. TUI: "Pausas activas" settings in the Break tab
