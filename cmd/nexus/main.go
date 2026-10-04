@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"nexus/internal/store"
+	"nexus/internal/tui"
 )
 
 type statusEntry struct {
@@ -35,13 +36,17 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) == 0 {
-		fmt.Println("TUI not implemented yet")
-		return nil
-	}
 	dbPath, err := databasePath()
 	if err != nil {
 		return err
+	}
+	if len(args) == 0 {
+		s, err := store.Open(dbPath)
+		if err != nil {
+			return err
+		}
+		defer s.Close()
+		return tui.Run(s)
 	}
 	command := args[0]
 	if command == "status" {
