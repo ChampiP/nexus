@@ -240,7 +240,7 @@ func (m Model) dashboardPanel(layout screenLayout) string {
 			prefix = "▸ "
 		}
 		text := fmt.Sprintf("%s%-22s %-14s %s", prefix, truncate(task.Title, 22), truncate(project, 14), formatDuration(task.TotalSeconds))
-		lines = append(lines, composeRow(text, recentContentX, zone.buttons, entryLabels(recentActions(task)), m.selectedButton(focusRecent, i), focused))
+		lines = append(lines, composeRow(text, recentContentX, zone.buttons, entryLabels(recentActions()), m.selectedButton(focusRecent, i), focused))
 	}
 	return panel.Width(max(30, m.width-2)).Render(strings.Join(lines, "\n"))
 }

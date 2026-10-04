@@ -60,12 +60,8 @@ func entryLabels(actions []entryAction) []string {
 // runningActions son los botones de un temporizador en curso.
 var runningActions = []entryAction{entryEdit, entryStop}
 
-// recentActions son los botones de una fila de RECIENTES: una tarea detenida se puede reanudar
-// y una en curso, detener.
-func recentActions(task tracking.TaskSummary) []entryAction {
-	if task.Running {
-		return []entryAction{entryStop, entryEdit, entryDelete}
-	}
+// recentActions son los botones de una tarea detenida en RECIENTES.
+func recentActions() []entryAction {
 	return []entryAction{entryResume, entryEdit, entryDelete}
 }
 
@@ -181,7 +177,7 @@ func (m *Model) clampFocus() {
 func (m Model) rowActions() []entryAction {
 	if m.focus == focusRecent {
 		if m.focusedRecent < len(m.recent) {
-			return recentActions(m.recent[m.focusedRecent])
+			return recentActions()
 		}
 		return nil
 	}

@@ -243,7 +243,7 @@ func TestHeaderIndicatorRemainingOverdueAndClick(t *testing.T) {
 func TestRecentExcludesBreaks(t *testing.T) {
 	store := twoTimers()
 	store.running = nil
-	store.recent = []tracking.Entry{{ID: 5, Kind: tracking.KindBreak, Title: "Descanso largo"}, {ID: 1, Kind: tracking.KindWork, Title: "Informe"}, {ID: 6, Title: "Sin tipo"}}
+	store.recent = []tracking.Entry{{ID: 5, Kind: tracking.KindBreak, Title: "Descanso largo"}, {ID: 1, Kind: tracking.KindWork, Title: "Informe", EndedAt: ended(100)}, {ID: 6, Title: "Sin tipo", EndedAt: ended(100)}}
 	m := breakModel(store, &fakeBreaks{})
 	if len(m.recent) != 2 || m.recent[0].Title != "Informe" || m.recent[1].Title != "Sin tipo" {
 		t.Fatalf("recent = %+v", m.recent)
@@ -257,7 +257,7 @@ func TestRecentExcludesBreaks(t *testing.T) {
 		store.recent = append(store.recent, tracking.Entry{ID: int64(100 + i), Kind: tracking.KindBreak, Title: "Break"})
 	}
 	for i := 0; i < 8; i++ {
-		store.recent = append(store.recent, tracking.Entry{ID: int64(i + 1), Title: fmt.Sprintf("T%d", i)})
+		store.recent = append(store.recent, tracking.Entry{ID: int64(i + 1), Title: fmt.Sprintf("T%d", i), EndedAt: ended(100)})
 	}
 	if m = breakModel(store, &fakeBreaks{}); len(m.recent) != 8 {
 		t.Fatalf("recent = %d, want 8 de trabajo", len(m.recent))

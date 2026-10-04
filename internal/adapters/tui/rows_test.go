@@ -50,18 +50,18 @@ func goTo(t *testing.T, m Model, target focusTarget, row int) Model {
 
 func TestFocusRingReachesRecentRows(t *testing.T) {
 	m := newRowsModel(newRowsStore())
-	want := []focusTarget{focusProject, focusDescription, focusStart, focusRunningStart, focusToday, focusRecent, focusRecent, focusRecent}
+	want := []focusTarget{focusProject, focusDescription, focusStart, focusRunningStart, focusToday, focusRecent, focusRecent}
 	for i, target := range want {
 		m = press(t, m, tea.KeyDown)
 		if m.focus != target {
 			t.Fatalf("paso %d: foco = %v, quería %v", i, m.focus, target)
 		}
 	}
-	if m.focusedRecent != 2 {
-		t.Fatalf("fila reciente = %d, quería 2", m.focusedRecent)
+	if m.focusedRecent != 1 {
+		t.Fatalf("fila reciente = %d, quería 1", m.focusedRecent)
 	}
 	m = press(t, m, tea.KeyDown)
-	if m.focus != focusRecent || m.focusedRecent != 2 {
+	if m.focus != focusRecent || m.focusedRecent != 1 {
 		t.Fatal("el foco debe detenerse en la última fila reciente")
 	}
 }
@@ -88,7 +88,7 @@ func TestLeftRightSwitchesRowButtons(t *testing.T) {
 func TestEnterOnEditOpensPrefilledPanel(t *testing.T) {
 	db := newRowsStore()
 	db.recent[0].Description = "detalle"
-	m := goTo(t, newRowsModel(db), focusRecent, 1)
+	m := goTo(t, newRowsModel(db), focusRecent, 0)
 	m = press(t, m, tea.KeyRight, tea.KeyEnter)
 	view := m.View()
 	for _, text := range []string{"Editar tarea #2", "[Guardar]", "[Eliminar]", "[Cancelar]"} {
@@ -106,7 +106,7 @@ func TestEnterOnEditOpensPrefilledPanel(t *testing.T) {
 
 func TestSaveSendsOnlyChangedFields(t *testing.T) {
 	db := newRowsStore()
-	m := goTo(t, newRowsModel(db), focusRecent, 1)
+	m := goTo(t, newRowsModel(db), focusRecent, 0)
 	m = press(t, m, tea.KeyRight, tea.KeyEnter)
 	m.inputs[0].SetValue("Nueva")
 	m = press(t, m, tea.KeyEnter)
@@ -124,7 +124,7 @@ func TestSaveSendsOnlyChangedFields(t *testing.T) {
 
 func TestSaveSendsChangedProjectAndDescription(t *testing.T) {
 	db := newRowsStore()
-	m := goTo(t, newRowsModel(db), focusRecent, 1)
+	m := goTo(t, newRowsModel(db), focusRecent, 0)
 	m = press(t, m, tea.KeyRight, tea.KeyEnter, tea.KeyDown, tea.KeyRight) // proyecto: tbwa → "Sin proyecto"
 	m = press(t, m, tea.KeyDown)
 	m.inputs[2].SetValue("nota")
@@ -151,7 +151,7 @@ func TestEscCancelsEditWithoutCallingEdit(t *testing.T) {
 }
 
 func TestEscClosesPickerBeforeEditPanel(t *testing.T) {
-	m := goTo(t, newRowsModel(newRowsStore()), focusRecent, 1)
+	m := goTo(t, newRowsModel(newRowsStore()), focusRecent, 0)
 	m = press(t, m, tea.KeyRight, tea.KeyEnter, tea.KeyDown, tea.KeyEnter)
 	if !m.pickerOpen {
 		t.Fatal("Enter en Proyecto debe abrir la lista")
@@ -181,7 +181,7 @@ func TestEditErrorsAreShownInSpanish(t *testing.T) {
 
 func TestDeleteRequiresConfirmationAndDefaultsToCancel(t *testing.T) {
 	db := newRowsStore()
-	m := goTo(t, newRowsModel(db), focusRecent, 1)
+	m := goTo(t, newRowsModel(db), focusRecent, 0)
 	m = press(t, m, tea.KeyRight, tea.KeyRight, tea.KeyEnter)
 	view := m.View()
 	if !strings.Contains(view, "¿Eliminar «Vieja A» y su sesión? Quedará en la papelera.") || !strings.Contains(view, "[Eliminar]") || !strings.Contains(view, "[Cancelar]") {
@@ -204,7 +204,7 @@ func TestDeleteRequiresConfirmationAndDefaultsToCancel(t *testing.T) {
 
 func TestConfirmDeletesThenUndoByButtonAndCtrlZ(t *testing.T) {
 	db := newRowsStore()
-	m := goTo(t, newRowsModel(db), focusRecent, 1)
+	m := goTo(t, newRowsModel(db), focusRecent, 0)
 	m = press(t, m, tea.KeyRight, tea.KeyRight, tea.KeyEnter, tea.KeyLeft, tea.KeyEnter)
 	if len(db.deleted) != 1 || db.deleted[0] != "t2" {
 		t.Fatalf("eliminadas = %v", db.deleted)
@@ -214,24 +214,24 @@ func TestConfirmDeletesThenUndoByButtonAndCtrlZ(t *testing.T) {
 	}
 	m = goTo(t, m, focusUndo, 0)
 	m = press(t, m, tea.KeyEnter)
-	if len(db.restored) != 1 || db.restored[0] != "t2" || len(m.recent) != 3 {
+	if len(db.restored) != 1 || db.restored[0] != "t2" || len(m.recent) != 2 {
 		t.Fatalf("restauradas = %v recientes = %d", db.restored, len(m.recent))
 	}
 	// Ctrl+Z restaura la última eliminada durante la sesión; el fake devuelve la restaurada al final.
-	m = goTo(t, m, focusRecent, 1)
+	m = goTo(t, m, focusRecent, 0)
 	m = press(t, m, tea.KeyRight, tea.KeyRight, tea.KeyEnter, tea.KeyLeft, tea.KeyEnter)
 	if len(db.deleted) != 2 {
 		t.Fatalf("eliminadas = %v", db.deleted)
 	}
 	m = press(t, m, tea.KeyCtrlZ)
-	if len(db.restored) != 2 || len(m.recent) != 3 || m.message != "Restaurada «Vieja B»" {
+	if len(db.restored) != 2 || len(m.recent) != 2 || m.message != "Restaurada «Vieja B»" {
 		t.Fatalf("Ctrl+Z: restauradas=%v mensaje=%q", db.restored, m.message)
 	}
 }
 
 func TestUndoButtonExpiresButCtrlZStillWorks(t *testing.T) {
 	db := newRowsStore()
-	m := goTo(t, newRowsModel(db), focusRecent, 1)
+	m := goTo(t, newRowsModel(db), focusRecent, 0)
 	m = press(t, m, tea.KeyRight, tea.KeyRight, tea.KeyEnter, tea.KeyLeft, tea.KeyEnter)
 	m.undoUntil = m.now.Add(-1)
 	m.refresh()
@@ -260,7 +260,7 @@ func TestEditRunningEntryKeepsItRunning(t *testing.T) {
 
 func TestEditPanelDeleteButtonConfirmsAndCloses(t *testing.T) {
 	db := newRowsStore()
-	m := goTo(t, newRowsModel(db), focusRecent, 2)
+	m := goTo(t, newRowsModel(db), focusRecent, 1)
 	m = press(t, m, tea.KeyRight, tea.KeyEnter)
 	m = press(t, m, tea.KeyDown, tea.KeyDown, tea.KeyDown, tea.KeyRight) // proyecto, descripción, Guardar, → Eliminar
 	if m.focus != focusEditDelete {
@@ -287,11 +287,11 @@ func TestClickHitTestsRowButtons(t *testing.T) {
 	click := func(m Model, z rect) Model {
 		return updateMouse(t, m, tea.MouseMsg{X: z.x, Y: z.y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	}
-	m = click(m, layout.recent[1].row)
-	if m.focus != focusRecent || m.focusedRecent != 1 {
+	m = click(m, layout.recent[0].row)
+	if m.focus != focusRecent || m.focusedRecent != 0 {
 		t.Fatalf("clic en la fila debe enfocarla, foco=%v", m.focus)
 	}
-	m = click(m, layout.recent[2].buttons[2])
+	m = click(m, layout.recent[1].buttons[2])
 	if m.confirm == nil || m.confirm.task.TaskUID != "t3" || len(db.deleted) != 0 {
 		t.Fatal("clic en ✕ Eliminar abre la confirmación sin borrar")
 	}
@@ -326,12 +326,12 @@ func TestClickConfirmCancelAndEditPanelFields(t *testing.T) {
 	click := func(m Model, z rect) Model {
 		return updateMouse(t, m, tea.MouseMsg{X: z.x, Y: z.y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	}
-	m = click(m, m.computeLayout().recent[1].buttons[2])
+	m = click(m, m.computeLayout().recent[0].buttons[2])
 	m = click(m, m.computeLayout().statusButtons[1]) // [Cancelar]
 	if m.confirm != nil || len(db.deleted) != 0 {
 		t.Fatal("Cancelar cierra sin borrar")
 	}
-	m = click(m, m.computeLayout().recent[1].buttons[1])
+	m = click(m, m.computeLayout().recent[0].buttons[1])
 	m = click(m, m.computeLayout().fields[2])
 	if m.focus != focusDescription {
 		t.Fatalf("clic en Descripción, foco=%v", m.focus)
@@ -361,6 +361,6 @@ func TestLayoutMatchesRenderedLines(t *testing.T) {
 		}
 	}
 	check(layout.running[0].row.y, layout.running[0].buttons[0], "[✎ Editar]")
-	check(layout.recent[2].row.y, layout.recent[2].buttons[2], "[✕ Eliminar]")
+	check(layout.recent[1].row.y, layout.recent[1].buttons[2], "[✕ Eliminar]")
 	check(layout.statusY, layout.statusButtons[0], "[Eliminar]")
 }

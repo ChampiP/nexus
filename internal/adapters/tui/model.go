@@ -121,10 +121,14 @@ func (m *Model) refresh() {
 	}
 	if tasks, err := m.tracker.RecentTasks(taskLimit); err == nil {
 		m.tasks = make(map[string]tracking.TaskSummary, len(tasks))
+		stopped := make([]tracking.TaskSummary, 0, len(tasks))
 		for _, task := range tasks {
 			m.tasks[task.TaskUID] = task
+			if !task.Running {
+				stopped = append(stopped, task)
+			}
 		}
-		m.recent = tasks[:min(len(tasks), recentRows)]
+		m.recent = stopped[:min(len(stopped), recentRows)]
 	}
 	m.totals, _ = m.tracker.Report(rangeStart(m.now, m.week))
 	m.loadCatalog()

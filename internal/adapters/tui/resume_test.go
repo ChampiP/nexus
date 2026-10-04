@@ -19,17 +19,24 @@ func viewLine(t *testing.T, m Model, y int) string {
 	return lines[y]
 }
 
-func TestRecentButtonsDependOnTaskState(t *testing.T) {
+func TestRecentOmitsRunningTasksButKeepsStoppedTasks(t *testing.T) {
+	m := newRowsModel(newRowsStore())
+	if len(m.recent) != 2 || m.recent[0].Title != "Vieja A" || m.recent[1].Title != "Vieja B" {
+		t.Fatalf("recientes = %+v, se esperaban solo tareas detenidas", m.recent)
+	}
+	if _, ok := m.tasks["t1"]; !ok {
+		t.Fatal("la tarea en curso debe conservarse en el total de tareas")
+	}
+}
+
+func TestRecentButtonsAreForStoppedTasks(t *testing.T) {
 	m := newRowsModel(newRowsStore())
 	layout := m.computeLayout()
-	if got := len(layout.recent[1].buttons); got != 3 {
+	if got := len(layout.recent[0].buttons); got != 3 {
 		t.Fatalf("fila detenida: %d botones, quería 3", got)
 	}
-	if line := viewLine(t, m, layout.recent[1].row.y); !strings.Contains(line, "[▶ Reanudar] [✎ Editar] [✕ Eliminar]") {
+	if line := viewLine(t, m, layout.recent[0].row.y); !strings.Contains(line, "[▶ Reanudar] [✎ Editar] [✕ Eliminar]") {
 		t.Fatalf("fila detenida sin Reanudar primero: %q", line)
-	}
-	if line := viewLine(t, m, layout.recent[0].row.y); !strings.Contains(line, "[■ Detener] [✎ Editar] [✕ Eliminar]") || strings.Contains(line, "Reanudar") {
-		t.Fatalf("la tarea en curso debe ofrecer Detener: %q", line)
 	}
 	if line := viewLine(t, m, layout.running[0].row.y); !strings.Contains(line, "[✎ Editar] [■ Detener]") || strings.Contains(line, "Reanudar") {
 		t.Fatalf("fila en curso cambió: %q", line)
@@ -38,7 +45,7 @@ func TestRecentButtonsDependOnTaskState(t *testing.T) {
 
 func TestResumeButtonCallsResumeAndReports(t *testing.T) {
 	db := newRowsStore()
-	m := goTo(t, newRowsModel(db), focusRecent, 1)
+	m := goTo(t, newRowsModel(db), focusRecent, 0)
 	m = press(t, m, tea.KeyEnter)
 	if len(db.resumed) != 1 || db.resumed[0] != 2 {
 		t.Fatalf("Resume = %v", db.resumed)
@@ -49,14 +56,14 @@ func TestResumeButtonCallsResumeAndReports(t *testing.T) {
 	if len(m.running) != 2 {
 		t.Fatalf("el temporizador reanudado debe aparecer en curso: %d", len(m.running))
 	}
-	if len(m.recent) != 3 {
-		t.Fatalf("la tarea sigue siendo una sola fila: %d filas", len(m.recent))
+	if len(m.recent) != 1 {
+		t.Fatalf("la tarea en curso no debe estar en RECIENTES: %d filas", len(m.recent))
 	}
 }
 
 func TestResumeReportsTaskAlreadyRunning(t *testing.T) {
 	db := newRowsStore()
-	m := goTo(t, newRowsModel(db), focusRecent, 1)
+	m := goTo(t, newRowsModel(db), focusRecent, 0)
 	// Otra sesión de la misma tarea arrancó desde fuera (por ejemplo, la CLI) antes de refrescar.
 	db.running = append(db.running, tracking.Entry{ID: 50, TaskUID: "t2", Title: "Vieja A", StartedAt: 60})
 	m = press(t, m, tea.KeyEnter)
@@ -71,34 +78,22 @@ func TestResumeReportsTaskAlreadyRunning(t *testing.T) {
 func TestResumeByClickUsesLayout(t *testing.T) {
 	db := newRowsStore()
 	m := newRowsModel(db)
-	zone := m.computeLayout().recent[2].buttons[0]
+	zone := m.computeLayout().recent[1].buttons[0]
 	m = click(t, m, zone)
 	if len(db.resumed) != 1 || db.resumed[0] != 3 {
 		t.Fatalf("clic en Reanudar: %v", db.resumed)
 	}
 }
 
-func TestRecentStopButtonStopsRunningSession(t *testing.T) {
+func TestRecentEditAndDeleteKeepWorking(t *testing.T) {
 	db := newRowsStore()
 	m := goTo(t, newRowsModel(db), focusRecent, 0)
-	m = press(t, m, tea.KeyEnter)
-	if len(db.stopped) != 1 || db.stopped[0] != 1 || len(m.running) != 0 {
-		t.Fatalf("Detener en RECIENTES: detenidos=%v en curso=%d", db.stopped, len(m.running))
-	}
-	if line := viewLine(t, m, m.computeLayout().recent[0].row.y); !strings.Contains(line, "[▶ Reanudar]") {
-		t.Fatalf("la tarea detenida ofrece Reanudar: %q", line)
-	}
-}
-
-func TestResumedRecentEditAndDeleteKeepWorking(t *testing.T) {
-	db := newRowsStore()
-	m := goTo(t, newRowsModel(db), focusRecent, 1)
 	m = press(t, m, tea.KeyRight, tea.KeyEnter)
 	if m.edit == nil || m.edit.entry.TaskUID != "t2" {
 		t.Fatal("el segundo botón debe ser Editar")
 	}
 	m = press(t, m, tea.KeyEsc)
-	m = goTo(t, m, focusRecent, 1)
+	m = goTo(t, m, focusRecent, 0)
 	m = press(t, m, tea.KeyRight, tea.KeyRight, tea.KeyEnter)
 	if m.confirm == nil || m.confirm.task.TaskUID != "t2" {
 		t.Fatal("el tercer botón debe ser Eliminar")

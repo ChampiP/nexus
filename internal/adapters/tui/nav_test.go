@@ -221,7 +221,7 @@ func TestTimersPageKeysJumpBetweenSections(t *testing.T) {
 func TestTimersHomeAndEnd(t *testing.T) {
 	m := goTo(t, timersWithTabs(), focusRunningStart, 0)
 	m = press(t, m, tea.KeyEnd)
-	if m.focus != focusRecent || m.focusedRecent != 2 || m.rowButton != 2 {
+	if m.focus != focusRecent || m.focusedRecent != 1 || m.rowButton != 2 {
 		t.Fatalf("End: foco=%v fila=%d botón=%d", m.focus, m.focusedRecent, m.rowButton)
 	}
 	m = press(t, m, tea.KeyHome)

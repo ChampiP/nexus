@@ -151,7 +151,7 @@ func (l *screenLayout) fillDashboard(m Model, width int) {
 	right := max(30, width-2)
 	for i := 0; i < count; i++ {
 		rowY := l.recentY + i
-		l.recent = append(l.recent, rowZones{row: rect{0, rowY, width, 1}, buttons: rightButtonRects(rowY, right, entryLabels(recentActions(m.recent[i])))})
+		l.recent = append(l.recent, rowZones{row: rect{0, rowY, width, 1}, buttons: rightButtonRects(rowY, right, entryLabels(recentActions()))})
 	}
 	recentLines := count
 	if len(m.recent) == 0 {
