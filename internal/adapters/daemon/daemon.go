@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	"nexus/internal/countdown"
@@ -44,8 +43,6 @@ func RunWithWellbeing(ctx context.Context, breaks Breaks, notifier Notifier, ope
 	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
 
-	var wg sync.WaitGroup
-	defer wg.Wait()
 	sendCtx, cancelSend := context.WithCancel(ctx)
 	defer cancelSend()
 
@@ -71,11 +68,11 @@ func RunWithWellbeing(ctx context.Context, breaks Breaks, notifier Notifier, ope
 					} else {
 						wellbeingPending = true
 						wait.since = time.Time{}
-						wg.Add(1)
 						go func(reminder wellbeing.Reminder) {
-							defer wg.Done()
 							defer func() { wellbeingFinished <- struct{}{} }()
-							showWellbeing(sendCtx, service, presenter, reminder, clock)
+							showCtx, cancel := context.WithTimeout(sendCtx, reminder.Duration+60*time.Second)
+							defer cancel()
+							showWellbeing(showCtx, service, presenter, reminder, clock)
 						}(r)
 					}
 				}
@@ -98,9 +95,7 @@ func RunWithWellbeing(ctx context.Context, breaks Breaks, notifier Notifier, ope
 			return
 		}
 		pending = true
-		wg.Add(1)
 		go func() {
-			defer wg.Done()
 			defer func() { finished <- struct{}{} }()
 			reply(sendCtx, breaks, notifier, open, notification(*b, now))
 		}()
@@ -123,7 +118,10 @@ func RunWithWellbeing(ctx context.Context, breaks Breaks, notifier Notifier, ope
 
 // reply envía la notificación y aplica la acción elegida.
 func reply(ctx context.Context, breaks Breaks, notifier Notifier, open Opener, n notify.Notification) {
-	id, err := notifier.Send(ctx, n)
+	sendCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	defer cancel()
+	id, err := notifier.Send(sendCtx, n)
+	ctx = sendCtx
 	if err != nil {
 		if ctx.Err() == nil {
 			slog.Error("no se pudo enviar la notificación", "error", err)

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 
@@ -28,16 +29,18 @@ func Open(path string) (*sql.DB, error) {
 	if err := secureFiles(path); err != nil {
 		return nil, err
 	}
-	db, err := sql.Open("sqlite", path)
+	query := url.Values{}
+	query.Add("_pragma", "busy_timeout(10000)")
+	query.Add("_pragma", "journal_mode(WAL)")
+	query.Add("_pragma", "foreign_keys(1)")
+	query.Set("_txlock", "immediate")
+	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: query.Encode()}).String()
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(`PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;`); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("configure database: %w", err)
-	}
-	// The WAL and shared-memory files may have been created by the PRAGMA above.
+	// The WAL and shared-memory files may have been created by opening the connection.
 	if err := secureFiles(path); err != nil {
 		db.Close()
 		return nil, err

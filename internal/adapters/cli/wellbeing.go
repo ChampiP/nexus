@@ -187,12 +187,27 @@ func showWellbeingStatus(s Wellbeing, now time.Time, jsonMode bool, out io.Write
 	if st.DNDUntil != nil && st.DNDUntil.After(now) {
 		text = fmt.Sprintf("Pausas activas: en no molestar hasta las %s", st.DNDUntil.Format("15:04"))
 	} else if st.Settings.Enabled {
-		text = fmt.Sprintf("Pausas activas: cada %d min, %s · próxima a las %s", int(st.Settings.Every/time.Minute), shortDuration(st.Settings.Duration), st.NextDue.Format("15:04"))
+		text = fmt.Sprintf("Pausas activas: cada %d min, %s", int(st.Settings.Every/time.Minute), shortDuration(st.Settings.Duration))
+		if !st.Active {
+			text += " · inactivo"
+		} else if st.ActiveFor < time.Minute {
+			text += fmt.Sprintf(" · recién empiezas · próxima en %s", shortMinutes(st.NextDue.Sub(now)))
+		} else {
+			text += fmt.Sprintf(" · llevas %s frente a la pantalla · próxima en %s", shortMinutes(st.ActiveFor), shortMinutes(st.NextDue.Sub(now)))
+		}
 	}
-	text += fmt.Sprintf(" · hoy: %d mostradas, %d hechas, %d saltadas", st.Counters.Shown, st.Counters.Done, st.Counters.Skipped)
+	text += fmt.Sprintf(" · hoy: %d mostradas, %d hechas, %d saltadas, %d pospuestas", st.Counters.Shown, st.Counters.Done, st.Counters.Skipped, st.Counters.Snoozed)
 	_, e = io.WriteString(out, text+"\n")
 	return e
 }
+func shortMinutes(d time.Duration) string {
+	minutes := int(d / time.Minute)
+	if minutes < 1 {
+		minutes = 1
+	}
+	return fmt.Sprintf("%d min", minutes)
+}
+
 func shortDuration(d time.Duration) string {
 	if d < time.Minute {
 		return fmt.Sprintf("%d s", int(d/time.Second))

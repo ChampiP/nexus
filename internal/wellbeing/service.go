@@ -5,19 +5,19 @@ import (
 	"time"
 )
 
-const idleReset = 5 * time.Minute
+const inactiveReset = 2 * time.Minute
 
 type Service struct {
-	repo  Repository
-	work  Work
-	clock Clock
+	repo     Repository
+	activity Activity
+	clock    Clock
 }
 
-func NewService(repo Repository, work Work, clock Clock) *Service {
+func NewService(repo Repository, activity Activity, clock Clock) *Service {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &Service{repo: repo, work: work, clock: clock}
+	return &Service{repo: repo, activity: activity, clock: clock}
 }
 
 func (s *Service) values() map[string]string {
@@ -78,36 +78,43 @@ func (s *Service) UpdateSettings(x Settings) error {
 	if !valid(x) {
 		return ErrInvalidSetting
 	}
-	v := s.values()
-	v["enabled"] = strconv.FormatBool(x.Enabled)
-	v["every"] = strconv.FormatInt(int64(x.Every/time.Second), 10)
-	v["duration"] = strconv.FormatInt(int64(x.Duration/time.Second), 10)
-	return s.repo.Save(v)
+	return s.repo.Save(map[string]string{
+		"enabled":  strconv.FormatBool(x.Enabled),
+		"every":    strconv.FormatInt(int64(x.Every/time.Second), 10),
+		"duration": strconv.FormatInt(int64(x.Duration/time.Second), 10),
+	})
 }
+
+// Due mide continuidad activa frente al equipo; dos minutos de observaciones inactivas reinician el tramo.
 func (s *Service) Due(now time.Time) (Reminder, bool) {
 	v := s.values()
-	running, err := s.work.WorkRunning()
+	active, err := s.activity.Active(now)
 	if err != nil {
 		return Reminder{}, false
 	}
-	if !running {
-		if since := parseTime(v["stopped_since"]); since.IsZero() {
-			v["stopped_since"] = strconv.FormatInt(now.Unix(), 10)
-		} else if now.Sub(since) > idleReset {
-			delete(v, "work_since")
-			delete(v, "last_shown_at")
+	if !active {
+		if parseTime(v["inactive_since"]).IsZero() {
+			v["inactive_since"] = strconv.FormatInt(now.Unix(), 10)
+			_ = s.repo.Save(v)
 		}
-		_ = s.repo.Save(v)
 		return Reminder{}, false
 	}
-	if stopped := parseTime(v["stopped_since"]); !stopped.IsZero() {
-		delete(v, "stopped_since")
-		if now.Sub(stopped) > idleReset {
-			v["work_since"] = strconv.FormatInt(now.Unix(), 10)
+	start := parseTime(v["active_since"])
+	inactiveSince := parseTime(v["inactive_since"])
+	if !inactiveSince.IsZero() {
+		if now.Sub(inactiveSince) >= inactiveReset || start.IsZero() {
+			start = now
 		}
-		_ = s.repo.Save(v)
+		delete(v, "inactive_since")
 	}
-	breakActive, err := s.work.BreakActive()
+	if start.IsZero() {
+		start = now
+	}
+	v["active_since"] = strconv.FormatInt(start.Unix(), 10)
+	if err := s.repo.Save(v); err != nil {
+		return Reminder{}, false
+	}
+	breakActive, err := s.activity.BreakActive()
 	if err != nil || breakActive {
 		return Reminder{}, false
 	}
@@ -121,12 +128,6 @@ func (s *Service) Due(now time.Time) (Reminder, bool) {
 	if until := parseTime(v["dnd_until"]); until.After(now) {
 		return Reminder{}, false
 	}
-	start := parseTime(v["work_since"])
-	if start.IsZero() {
-		start = now
-		v["work_since"] = strconv.FormatInt(now.Unix(), 10)
-		_ = s.repo.Save(v)
-	}
 	last := parseTime(v["last_shown_at"])
 	if last.After(start) {
 		start = last
@@ -135,8 +136,7 @@ func (s *Service) Due(now time.Time) (Reminder, bool) {
 		return Reminder{}, false
 	}
 	i := parseInt(v["rotation"])
-	r := Reminder{ID: int64(i + 1), Duration: cfg.Duration, Message: messages[i%len(messages)], Tip: tips[i%len(tips)]}
-	return r, true
+	return Reminder{ID: int64(i + 1), Duration: cfg.Duration, Message: messages[i%len(messages)], Tip: tips[i%len(tips)]}, true
 }
 func optionalTime(x time.Time) *time.Time {
 	if x.IsZero() {
@@ -162,17 +162,22 @@ func (s *Service) MarkShown(now time.Time) error {
 	v := s.values()
 	v["last_shown_at"] = strconv.FormatInt(now.Unix(), 10)
 	v["rotation"] = strconv.Itoa(parseInt(v["rotation"]) + 1)
-	return s.saveEvent(v, "shown", now)
+	return s.saveEvent(map[string]string{"last_shown_at": v["last_shown_at"], "rotation": v["rotation"]}, "shown", now)
 }
 func (s *Service) Done(now time.Time) error { return s.record(now, "done") }
 func (s *Service) Skip(now time.Time) error { return s.record(now, "skipped") }
 func (s *Service) record(now time.Time, event string) error {
-	return s.saveEvent(s.values(), event, now)
+	return s.saveEvent(nil, event, now)
 }
-
 func (s *Service) saveEvent(values map[string]string, event string, now time.Time) error {
 	if repo, ok := s.repo.(eventRepository); ok {
+		if values == nil {
+			values = map[string]string{}
+		}
 		return repo.SaveEvent(values, event, now.Unix())
+	}
+	if values == nil {
+		values = s.values()
 	}
 	if event == "shown" || event == "done" || event == "skipped" {
 		key := event + ":" + now.Format("2006-01-02")
@@ -181,23 +186,30 @@ func (s *Service) saveEvent(values map[string]string, event string, now time.Tim
 	return s.repo.Save(values)
 }
 func (s *Service) Snooze(now time.Time, d time.Duration) error {
-	v := s.values()
-	v["snoozed_until"] = strconv.FormatInt(now.Add(d).Unix(), 10)
-	return s.saveEvent(v, "snoozed", now)
+	return s.saveEvent(map[string]string{"snoozed_until": strconv.FormatInt(now.Add(d).Unix(), 10)}, "snoozed", now)
 }
 func (s *Service) DND(now time.Time, d time.Duration) error {
+	return s.repo.Save(map[string]string{"dnd_until": strconv.FormatInt(now.Add(d).Unix(), 10)})
+}
+func (s *Service) ClearDND() error {
+	if deleter, ok := s.repo.(interface{ Delete(string) error }); ok {
+		return deleter.Delete("dnd_until")
+	}
 	v := s.values()
-	v["dnd_until"] = strconv.FormatInt(now.Add(d).Unix(), 10)
+	delete(v, "dnd_until")
 	return s.repo.Save(v)
 }
-func (s *Service) ClearDND() error { v := s.values(); delete(v, "dnd_until"); return s.repo.Save(v) }
 func (s *Service) Status(now time.Time) (Status, error) {
 	v, e := s.repo.Load()
 	if e != nil {
 		return Status{}, e
 	}
 	cfg := s.settings(v)
-	start := parseTime(v["work_since"])
+	active, err := s.activity.Active(now)
+	if err != nil {
+		return Status{}, err
+	}
+	start := parseTime(v["active_since"])
 	last := parseTime(v["last_shown_at"])
 	if last.After(start) {
 		start = last
@@ -206,17 +218,23 @@ func (s *Service) Status(now time.Time) (Status, error) {
 	if start.IsZero() {
 		next = now.Add(cfg.Every)
 	}
+	activeFor := time.Duration(0)
+	if active && !parseTime(v["active_since"]).IsZero() {
+		activeFor = now.Sub(parseTime(v["active_since"]))
+		if activeFor < 0 {
+			activeFor = 0
+		}
+	}
 	startDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	var counters Counters
 	if repo, ok := s.repo.(eventRepository); ok {
-		var err error
 		counters, err = repo.Counters(startDay.Unix(), startDay.AddDate(0, 0, 1).Unix())
 		if err != nil {
 			return Status{}, err
 		}
 	} else {
 		day := now.Format("2006-01-02")
-		counters = Counters{Shown: parseInt(v["shown:"+day]), Done: parseInt(v["done:"+day]), Skipped: parseInt(v["skipped:"+day])}
+		counters = Counters{Shown: parseInt(v["shown:"+day]), Done: parseInt(v["done:"+day]), Skipped: parseInt(v["skipped:"+day]), Snoozed: parseInt(v["snoozed:"+day])}
 	}
-	return Status{Settings: cfg, NextDue: next, SnoozedUntil: optionalTime(parseTime(v["snoozed_until"])), DNDUntil: optionalTime(parseTime(v["dnd_until"])), Counters: counters}, nil
+	return Status{Settings: cfg, NextDue: next, Active: active, ActiveFor: activeFor, SnoozedUntil: optionalTime(parseTime(v["snoozed_until"])), DNDUntil: optionalTime(parseTime(v["dnd_until"])), Counters: counters}, nil
 }

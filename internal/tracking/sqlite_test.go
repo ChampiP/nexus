@@ -3,7 +3,9 @@ package tracking
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -104,6 +106,58 @@ func TestOpenCreatesParentAndSupportsConcurrentTimers(t *testing.T) {
 	}
 	if len(running) != 2 || running[0].Title != "first" || running[0].Project != "work" || running[0].Description != "details" {
 		t.Fatalf("Running() = %+v", running)
+	}
+}
+
+func TestConcurrentIndependentHandlesStartAndStop(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nexus.db")
+	seed, err := openSQLite(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	const workers = 12
+	start := make(chan struct{})
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			db, err := platformdb.Open(path)
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer db.Close()
+			repo := NewSQLite(db)
+			<-start
+			entry, err := repo.Insert(Entry{Title: fmt.Sprintf("task-%d", i), StartedAt: int64(i + 1)})
+			if err == nil {
+				err = repo.Stop(entry.ID, int64(i+100))
+			}
+			if err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("start/stop: %v", err)
+	}
+	db, err := platformdb.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var rows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM entries WHERE ended_at IS NOT NULL`).Scan(&rows); err != nil || rows != workers {
+		t.Fatalf("stopped rows=%d err=%v", rows, err)
 	}
 }
 

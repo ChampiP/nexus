@@ -1,20 +1,105 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"nexus/internal/catalog"
 	"nexus/internal/countdown"
 	platformdb "nexus/internal/platform/db"
+	"nexus/internal/platform/presence"
 	"nexus/internal/tracking"
 )
+
+type activityFixture map[string]string
+
+func (f activityFixture) Output(_ context.Context, name string, args ...string) ([]byte, error) {
+	key := name + " " + strings.Join(args, " ")
+	value, ok := f[key]
+	if !ok {
+		return nil, errors.New("unexpected presence command")
+	}
+	return []byte(value), nil
+}
+
+func TestStatusOpenFailureKeepsValidJSONAndExplainsError(t *testing.T) {
+	badPath := filepath.Join(t.TempDir(), "database-directory")
+	if err := os.Mkdir(badPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("NEXUS_DB", badPath)
+	capture, err := os.CreateTemp(t.TempDir(), "status-output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer capture.Close()
+	original := os.Stdout
+	os.Stdout = capture
+	runErr := run([]string{"status", "--json"})
+	os.Stdout = original
+	if runErr != nil {
+		t.Fatal(runErr)
+	}
+	if _, err := capture.Seek(0, 0); err != nil {
+		t.Fatal(err)
+	}
+	output, err := io.ReadAll(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var actual map[string]any
+	if err := json.Unmarshal(output, &actual); err != nil {
+		t.Fatalf("output=%s err=%v", output, err)
+	}
+	if actual["error"] != "no se pudo leer la base de datos" {
+		t.Fatalf("output=%s", output)
+	}
+}
+
+func TestStatusOpenFailureHelperKeepsValidJSON(t *testing.T) {
+	var out bytes.Buffer
+	if err := writeStatusOpenError(&out, errors.New("database is locked")); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["today_seconds"] != float64(0) || got["error"] != "no se pudo leer la base de datos" {
+		t.Fatalf("status error JSON = %s", out.String())
+	}
+}
+
+func TestWellActivityTreatsIdleAndLockedAsInactive(t *testing.T) {
+	for _, tc := range []struct {
+		name, idle, locked string
+		want               bool
+	}{
+		{"active", `{"enabled":true,"idle":false,"inIdleCycle":false}`, "false", true},
+		{"idle", `{"enabled":true,"idle":true,"inIdleCycle":true}`, "false", false},
+		{"locked", `{"enabled":true,"idle":false,"inIdleCycle":false}`, "true", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			detector := presence.New(activityFixture{"omarchy-shell idle status": tc.idle, "omarchy-shell lock isLocked": tc.locked})
+			active, err := (wellActivity{presence: detector}).Active(time.Now())
+			if err != nil || active != tc.want {
+				t.Fatalf("Active() = %v, %v; want %v", active, err, tc.want)
+			}
+		})
+	}
+}
 
 const legacySchema = `
 CREATE TABLE entries (

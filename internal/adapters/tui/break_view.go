@@ -143,7 +143,12 @@ func (m Model) activePauseLines() []string {
 	case m.pauseStatus.DNDUntil != nil && m.pauseStatus.DNDUntil.After(m.now):
 		status = "No molestar hasta las " + m.pauseStatus.DNDUntil.Format("15:04")
 	case cfg.Enabled:
-		status = fmt.Sprintf("Activadas · cada %d min · %s · próxima a las %s", int(cfg.Every/time.Minute), pauseDurationText(cfg.Duration), m.pauseStatus.NextDue.Format("15:04"))
+		status = fmt.Sprintf("Activadas · cada %d min, %s", int(cfg.Every/time.Minute), pauseDurationText(cfg.Duration))
+		if !m.pauseStatus.Active {
+			status += " · inactivo"
+		} else {
+			status += fmt.Sprintf(" · llevas %s frente a la pantalla · próxima en %s", pauseDurationText(m.pauseStatus.ActiveFor), pauseDurationText(max(time.Duration(time.Minute), m.pauseStatus.NextDue.Sub(m.now))))
+		}
 	}
 	counters := m.pauseStatus.Counters
 	enabled := 1

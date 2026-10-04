@@ -2,8 +2,8 @@ package wellbeing
 
 import "time"
 
-type Work interface {
-	WorkRunning() (bool, error)
+type Activity interface {
+	Active(time.Time) (bool, error)
 	BreakActive() (bool, error)
 }
 

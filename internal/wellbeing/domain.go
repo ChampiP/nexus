@@ -24,14 +24,17 @@ type Counters struct {
 	Shown   int `json:"shown"`
 	Done    int `json:"done"`
 	Skipped int `json:"skipped"`
+	Snoozed int `json:"snoozed"`
 }
 
 type Status struct {
-	Settings     Settings   `json:"settings"`
-	NextDue      time.Time  `json:"next_due"`
-	SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
-	DNDUntil     *time.Time `json:"dnd_until,omitempty"`
-	Counters     Counters   `json:"today"`
+	Settings     Settings      `json:"settings"`
+	NextDue      time.Time     `json:"next_due"`
+	Active       bool          `json:"active"`
+	ActiveFor    time.Duration `json:"active_for"`
+	SnoozedUntil *time.Time    `json:"snoozed_until,omitempty"`
+	DNDUntil     *time.Time    `json:"dnd_until,omitempty"`
+	Counters     Counters      `json:"today"`
 }
 
 func DefaultSettings() Settings {

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"syscall"
 	"time"
 )
 
@@ -25,6 +26,19 @@ func Migrate(db *sql.DB, path string, migrations []Migration, now func() time.Ti
 		}
 		last[m.Module] = m.Version
 	}
+	lock, err := os.OpenFile(path+".migrate.lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return 0, "", fmt.Errorf("open migration lock: %w", err)
+	}
+	defer lock.Close()
+	if err := lock.Chmod(0o600); err != nil {
+		return 0, "", fmt.Errorf("secure migration lock: %w", err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return 0, "", fmt.Errorf("lock migrations: %w", err)
+	}
+	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+
 	var userTables int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'schema_migrations'`).Scan(&userTables); err != nil {
 		return 0, "", fmt.Errorf("inspect database: %w", err)
@@ -97,7 +111,7 @@ func applyOne(db *sql.DB, m Migration, now time.Time) (bool, error) {
 }
 
 func backupTo(db *sql.DB, path string, now time.Time) (string, error) {
-	backup := fmt.Sprintf("%s.bak-%d", path, now.Unix())
+	backup := fmt.Sprintf("%s.bak-%d-%d", path, now.UnixNano(), os.Getpid())
 	// VACUUM INTO accepts an empty existing file, so the backup is never wider than 0600.
 	file, err := os.OpenFile(backup, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {

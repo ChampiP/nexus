@@ -17,11 +17,10 @@ func (m *memory) Load() (map[string]string, error) {
 }
 func (m *memory) Save(x map[string]string) error { m.values = x; return nil }
 func (m *memory) SaveEvent(x map[string]string, event string, at int64) error {
-	if err := m.Save(x); err != nil {
-		return err
+	for key, value := range x {
+		m.values[key] = value
 	}
-	key := fmt.Sprintf("event:%d:%s", at, event)
-	m.values[key] = "1"
+	m.values[fmt.Sprintf("event:%d:%s", at, event)] = "1"
 	return nil
 }
 func (m *memory) Counters(start, end int64) (Counters, error) {
@@ -37,22 +36,24 @@ func (m *memory) Counters(start, end int64) (Counters, error) {
 				result.Done++
 			case "skipped":
 				result.Skipped++
+			case "snoozed":
+				result.Snoozed++
 			}
 		}
 	}
 	return result, nil
 }
 
-type workState struct{ running, breaking bool }
+type workState struct{ active, breaking bool }
 
-func (w *workState) WorkRunning() (bool, error) { return w.running, nil }
-func (w *workState) BreakActive() (bool, error) { return w.breaking, nil }
+func (w *workState) Active(time.Time) (bool, error) { return w.active, nil }
+func (w *workState) BreakActive() (bool, error)     { return w.breaking, nil }
 
 func TestDefaultsValidationDueAndCounters(t *testing.T) {
 	now := time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC)
 	repo := &memory{map[string]string{}}
-	w := &workState{running: true}
-	s := NewService(repo, w, func() time.Time { return now })
+	w := &workState{active: true}
+	s := NewService(repo, w, nil)
 	if got, _ := s.Settings(); got != DefaultSettings() {
 		t.Fatalf("defaults: %+v", got)
 	}
@@ -78,29 +79,54 @@ func TestDefaultsValidationDueAndCounters(t *testing.T) {
 		t.Fatalf("invalid settings error=%v", e)
 	}
 }
-func TestShortIdlePreservesContinuousWork(t *testing.T) {
+
+func TestDueUsesActiveComputerWithNoRunningTimers(t *testing.T) {
 	now := time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC)
 	repo := &memory{map[string]string{}}
-	w := &workState{running: true}
-	s := NewService(repo, w, func() time.Time { return now })
+	w := &workState{active: true}
+	s := NewService(repo, w, nil)
 	_, _ = s.Due(now)
-	w.running = false
-	_, _ = s.Due(now)
-	now = now.Add(4 * time.Minute)
-	w.running = true
-	_, _ = s.Due(now)
-	now = now.Add(26 * time.Minute)
+	now = now.Add(30 * time.Minute)
 	if _, ok := s.Due(now); !ok {
-		t.Fatal("short idle should preserve the original work stretch")
+		t.Fatal("active computer should become due regardless of running timers")
 	}
 }
 
-func TestScheduleBlocksAndIdleReset(t *testing.T) {
+func TestInactiveContinuityRules(t *testing.T) {
+	cases := []struct {
+		name     string
+		inactive time.Duration
+		reset    bool
+	}{{"short blip", time.Minute, false}, {"two minute break", 2 * time.Minute, true}, {"locked", 2 * time.Minute, true}}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC)
+			repo := &memory{map[string]string{}}
+			w := &workState{active: true}
+			s := NewService(repo, w, nil)
+			_, _ = s.Due(now)
+			w.active = false
+			_, _ = s.Due(now)
+			w.active = true
+			resume := now.Add(tc.inactive)
+			_, _ = s.Due(resume)
+			if tc.reset {
+				if got := parseTime(repo.values["active_since"]); !got.Equal(resume) {
+					t.Fatalf("continuity start=%v want %v", got, resume)
+				}
+			} else if got := parseTime(repo.values["active_since"]); !got.Equal(now) {
+				t.Fatalf("short inactive blip reset continuity: %v", got)
+			}
+		})
+	}
+}
+
+func TestBreakSnoozeAndDNDBlockDue(t *testing.T) {
 	now := time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC)
 	repo := &memory{map[string]string{}}
-	w := &workState{running: true}
-	s := NewService(repo, w, func() time.Time { return now })
-	_ = s.MarkShown(now)
+	w := &workState{active: true}
+	s := NewService(repo, w, nil)
+	_, _ = s.Due(now)
 	w.breaking = true
 	now = now.Add(time.Hour)
 	if _, ok := s.Due(now); ok {
@@ -116,16 +142,8 @@ func TestScheduleBlocksAndIdleReset(t *testing.T) {
 		t.Fatal("DND must block")
 	}
 	_ = s.ClearDND()
-	w.running = false
-	_, _ = s.Due(now)
-	now = now.Add(6 * time.Minute)
-	w.running = true
-	if _, ok := s.Due(now); ok {
-		t.Fatal("fresh work stretch must wait for interval")
-	}
 }
 
-// 15 segundos es una duración válida: el usuario la pidió para pausas cortas.
 func TestFifteenSecondsIsAllowed(t *testing.T) {
 	s := NewService(&memory{map[string]string{}}, &workState{}, time.Now)
 	if err := s.UpdateSettings(Settings{Enabled: true, Every: 20 * time.Minute, Duration: 15 * time.Second}); err != nil {

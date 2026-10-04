@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -42,7 +44,7 @@ func run(args []string) error {
 	tracker, catalogService, breaks, activePauses, closeDB, err := openApp(path)
 	if err != nil {
 		if len(args) > 0 && args[0] == "status" && hasJSONFlag(args[1:]) {
-			return cli.Run(args, nil, os.Stdout, os.Stderr)
+			return writeStatusOpenError(os.Stdout, err)
 		}
 		return err
 	}
@@ -58,6 +60,13 @@ func run(args []string) error {
 		}))
 	}
 	return cli.RunWithOptions(args, tracker, cli.Options{Catalog: catalogService, Breaks: breaks, Wellbeing: activePauses, Presenter: wellbeingPresenter{}}, os.Stdout, os.Stderr)
+}
+
+func writeStatusOpenError(out io.Writer, _ error) error {
+	return json.NewEncoder(out).Encode(map[string]any{
+		"running": []any{}, "count": 0, "today_seconds": 0, "break": nil,
+		"error": "no se pudo leer la base de datos",
+	})
 }
 
 func showPauseNow(service *wellbeing.Service) error {
@@ -127,7 +136,7 @@ func openApp(path string) (*tracking.Tracker, *catalog.Service, *countdown.Servi
 		return nil, nil, nil, nil, nil, err
 	}
 	tracker, catalogService, breaks := wire(db, time.Now)
-	activePauses := wellbeing.NewService(wellbeing.NewSQLite(db), wellWork{tracker: tracker, breaks: breaks}, time.Now)
+	activePauses := wellbeing.NewService(wellbeing.NewSQLite(db), wellActivity{presence: presence.New(nil), breaks: breaks}, time.Now)
 	if _, err := tracker.Purge(trashRetention); err != nil {
 		fmt.Fprintln(os.Stderr, "nexus: no se pudo purgar la papelera:", err)
 	}
@@ -145,24 +154,19 @@ func wire(db *sql.DB, now func() time.Time) (*tracking.Tracker, *catalog.Service
 	return tracker, catalog.NewService(catalogRepo, trackerEntries{tracker}, now), breaks
 }
 
-type wellWork struct {
-	tracker *tracking.Tracker
-	breaks  *countdown.Service
+type wellActivity struct {
+	presence *presence.Detector
+	breaks   *countdown.Service
 }
 
-func (w wellWork) WorkRunning() (bool, error) {
-	entries, _, _, err := w.tracker.Snapshot()
+func (w wellActivity) Active(now time.Time) (bool, error) {
+	state, err := w.presence.Activity(context.Background())
 	if err != nil {
 		return false, err
 	}
-	for _, e := range entries {
-		if e.Kind == tracking.KindWork {
-			return true, nil
-		}
-	}
-	return false, nil
+	return !state.Locked && !state.Idle, nil
 }
-func (w wellWork) BreakActive() (bool, error) { b, err := w.breaks.Active(); return b != nil, err }
+func (w wellActivity) BreakActive() (bool, error) { b, err := w.breaks.Active(); return b != nil, err }
 
 // trackerTimers adapts tracking to the port countdown uses to control timers.
 type trackerTimers struct{ tracker *tracking.Tracker }

@@ -1,10 +1,13 @@
 package wellbeing
 
 import (
-	platformdb "nexus/internal/platform/db"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
+
+	platformdb "nexus/internal/platform/db"
 )
 
 func TestLegacyCountersBecomeEventsAndAreRemoved(t *testing.T) {
@@ -41,6 +44,70 @@ func TestLegacyCountersBecomeEventsAndAreRemoved(t *testing.T) {
 	}
 }
 
+func TestConcurrentActionsUseSeparateSQLiteHandles(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nexus.db")
+	setup, err := platformdb.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := platformdb.Migrate(setup, path, Migrations(), time.Now); err != nil {
+		t.Fatal(err)
+	}
+	if err := setup.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	const each = 5
+	start := make(chan struct{})
+	errs := make(chan error, each*2)
+	var wg sync.WaitGroup
+	for i := 0; i < each*2; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			db, err := platformdb.Open(path)
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer db.Close()
+			<-start
+			s := NewService(NewSQLite(db), &workState{active: true}, time.Now)
+			now := time.Now()
+			if i%2 == 0 {
+				err = s.Skip(now)
+			} else {
+				err = s.Snooze(now, time.Minute)
+			}
+			if err != nil {
+				errs <- fmt.Errorf("action %d: %w", i, err)
+			}
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("action: %v", err)
+	}
+	db, err := platformdb.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var total, skipped, snoozed int
+	if err := db.QueryRow(`SELECT COUNT(*), SUM(event='skipped'), SUM(event='snoozed') FROM wellbeing_events`).Scan(&total, &skipped, &snoozed); err != nil {
+		t.Fatal(err)
+	}
+	if total != 10 || skipped != 5 || snoozed != 5 {
+		t.Fatalf("events=%d skipped=%d snoozed=%d", total, skipped, snoozed)
+	}
+	st, err := NewService(NewSQLite(db), &workState{active: true}, time.Now).Status(time.Now())
+	if err != nil || st.Counters.Snoozed != 5 {
+		t.Fatalf("snoozed counter=%d err=%v", st.Counters.Snoozed, err)
+	}
+}
+
 func TestSQLiteMigrationPersistsSettingsAndCounters(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nexus.db")
 	db, e := platformdb.Open(path)
@@ -52,7 +119,7 @@ func TestSQLiteMigrationPersistsSettingsAndCounters(t *testing.T) {
 		t.Fatal(e)
 	}
 	repo := NewSQLite(db)
-	w := &workState{running: true}
+	w := &workState{active: true}
 	s := NewService(repo, w, time.Now)
 	cfg := DefaultSettings()
 	cfg.Every = 20 * time.Minute
@@ -74,7 +141,7 @@ func TestSQLiteMigrationPersistsSettingsAndCounters(t *testing.T) {
 	}
 	again := NewService(repo, w, time.Now)
 	st, e := again.Status(now)
-	if e != nil || st.Settings.Every != 20*time.Minute || st.Counters != (Counters{Shown: 1, Done: 1, Skipped: 1}) {
+	if e != nil || st.Settings.Every != 20*time.Minute || st.Counters != (Counters{Shown: 1, Done: 1, Skipped: 1, Snoozed: 1}) {
 		t.Fatalf("status=%+v err=%v", st, e)
 	}
 	var events int

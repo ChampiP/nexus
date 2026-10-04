@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
@@ -83,7 +85,7 @@ func TestMigrateBacksUpExistingDatabaseOnce(t *testing.T) {
 	if err != nil || applied != 1 {
 		t.Fatalf("Migrate = %d, %q, %v", applied, backup, err)
 	}
-	if want := path + ".bak-1700000000"; backup != want {
+	if want := path + ".bak-" + strconv.FormatInt(fixedNow().UnixNano(), 10) + "-" + strconv.Itoa(os.Getpid()); backup != want {
 		t.Fatalf("backup = %q, want %q", backup, want)
 	}
 	info, err := os.Stat(backup)
@@ -134,6 +136,60 @@ func TestMigrateFailureRollsBackAndStops(t *testing.T) {
 	}
 	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&rows); err != nil || rows != 1 {
 		t.Fatalf("schema_migrations rows = %d, %v", rows, err)
+	}
+}
+
+func TestMigrateConcurrentLegacyDatabaseBacksUpOnce(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "n.db")
+	seed, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	exec(t, seed, `CREATE TABLE legacy (id INTEGER); INSERT INTO legacy VALUES (42)`)
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	const workers = 5
+	start := make(chan struct{})
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			db, err := Open(path)
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer db.Close()
+			<-start
+			_, _, err = Migrate(db, path, []Migration{{"a", 1, createTable("migrated")}}, fixedNow)
+			if err != nil {
+				errs <- err
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Errorf("Migrate: %v", err)
+	}
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var rows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE module='a' AND version=1`).Scan(&rows); err != nil || rows != 1 {
+		t.Fatalf("migration rows=%d err=%v", rows, err)
+	}
+	backups, err := filepath.Glob(path + ".bak-*")
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("backups=%v err=%v", backups, err)
 	}
 }
 

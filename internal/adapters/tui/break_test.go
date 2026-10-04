@@ -125,8 +125,9 @@ func TestActivePauseSettingsRenderAndStatusVariants(t *testing.T) {
 		status wellbeing.Status
 		want   string
 	}{
-		{"activadas", wellbeing.Status{Settings: wellbeing.Settings{Enabled: true, Every: 30 * time.Minute, Duration: 30 * time.Second}, NextDue: now.Add(40 * time.Minute), Counters: wellbeing.Counters{Done: 3, Skipped: 1}}, "Activadas · cada 30 min · 30 s · próxima a las 15:40"},
+		{"activadas", wellbeing.Status{Settings: wellbeing.Settings{Enabled: true, Every: 30 * time.Minute, Duration: 30 * time.Second}, NextDue: now.Add(18 * time.Minute), Active: true, ActiveFor: 12 * time.Minute, Counters: wellbeing.Counters{Done: 3, Skipped: 1}}, "Activadas · cada 30 min, 30 s"},
 		{"desactivadas", wellbeing.Status{Settings: wellbeing.Settings{Enabled: false, Every: 30 * time.Minute, Duration: 30 * time.Second}}, "Desactivadas"},
+		{"inactivas", wellbeing.Status{Settings: wellbeing.Settings{Enabled: true, Every: 30 * time.Minute, Duration: 30 * time.Second}}, "Activadas · cada 30 min, 30 s · inactivo"},
 		{"no molestar", wellbeing.Status{Settings: wellbeing.Settings{Enabled: true}, DNDUntil: ptrTime(now.Add(time.Hour))}, "No molestar hasta las 16:00"},
 	}
 	for _, tc := range cases {
@@ -137,7 +138,7 @@ func TestActivePauseSettingsRenderAndStatusVariants(t *testing.T) {
 			m.loadWellbeing()
 			m.screen = screenBreak
 			view := m.View()
-			if !strings.Contains(view, tc.want) || !strings.Contains(view, "Hoy: 3 hechas · 1 saltada") && tc.name == "activadas" {
+			if !strings.Contains(view, tc.want) || (!strings.Contains(view, "Hoy: 3") || !strings.Contains(view, "hechas · 1 saltada")) && tc.name == "activadas" || tc.name == "activadas" && (!strings.Contains(view, "llevas 12 min frente a la pantalla") || !strings.Contains(view, "próxima en 18 min")) {
 				t.Fatalf("vista sin estado o contadores esperados:\n%s", view)
 			}
 		})

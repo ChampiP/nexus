@@ -122,6 +122,20 @@ func (s *SQLite) SaveEvent(v map[string]string, event string, at int64) error {
 }
 
 func saveChanged(tx *sql.Tx, values map[string]string) error {
+	for key, value := range values {
+		if _, err := tx.Exec(`INSERT INTO wellbeing_settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *SQLite) Delete(key string) error {
+	_, err := s.db.Exec(`DELETE FROM wellbeing_settings WHERE key = ?`, key)
+	return err
+}
+
+func obsoleteSaveChanged(tx *sql.Tx, values map[string]string) error {
 	rows, err := tx.Query(`SELECT key,value FROM wellbeing_settings`)
 	if err != nil {
 		return err
@@ -176,6 +190,8 @@ func (s *SQLite) Counters(start, end int64) (Counters, error) {
 			result.Done = count
 		case "skipped":
 			result.Skipped = count
+		case "snoozed":
+			result.Snoozed = count
 		}
 	}
 	return result, rows.Err()
