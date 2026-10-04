@@ -352,6 +352,7 @@ Antes de la primera versión pública hace falta un `SECURITY.md` con un canal p
 | 6 | Escritura de vuelta mediante outbox y PendingActions (mover una tarjeta de Notion, crear un evento) | Cada escritura externa se aprueba, se audita y se reintenta de forma segura |
 | 7 | OAuth para el MCP remoto, solo si el acceso remoto debe cambiar correos o el calendario | Modelo de amenazas revisado; tokens de corta duración y acotados |
 | 8 | Automatización de navegador en los sitios propios del usuario (proceso aparte) | Simulación y aprobación antes de cualquier cambio |
+| Después | Dashboard de actividad: tiempo por aplicación (terminal, navegador, videos) a partir de los eventos de ventana activa de Hyprland, recogidos por el daemon y guardados localmente | Opcional; los datos nunca salen de la máquina |
 | Después | Sincronización entre varias computadoras | Aún no planificada; el `uid` y el registro de eventos dejan la puerta abierta |
 
 ## 17. Decisiones y preguntas abiertas

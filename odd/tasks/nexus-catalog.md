@@ -3,6 +3,8 @@
 Goal: edit/delete entries, rename/merge/delete projects, and make projects real entities under
 Client > Organization (see docs/ARCHITECTURE.md, phase 1).
 
+Next phase after this one: break countdown with reminder (user priority).
+
 Non-goals: daemon, reminders, integrations, dropping the legacy `entries.project` text column
 (the contract step needs separate authorization).
 
@@ -21,7 +23,8 @@ data dir `0700` / database `0600`.
 - A running timer (ended_at NULL) must survive migration untouched.
 
 ## Tasks
-- [ ] 1. Platform db + package-by-module refactor (safe refactor, tests green), per-module migrations, catalog schema, backfill, backup, permissions (+ tests of preservation/idempotency/mixed version)
+- [ ] 1a. Safe refactor to package-by-module: internal/tracking (domain, service, ports, sqlite), internal/platform/db, internal/adapters/{cli,tui}; behavior unchanged, tests green before and after
+- [ ] 1b. Per-module migrations (schema_migrations), catalog schema, backfill from entries.project, automatic backup, entry uid/kind/deleted_at, data dir 0700 / db 0600 (+ tests: preservation, running timer survives, idempotency, old binary still works)
 - [ ] 2. App: edit/delete entry; catalog use cases (projects, clients, organizations: create, rename, merge, move, delete)
 - [ ] 3. CLI: edit, rm, project/client/org commands, additive JSON fields, Spanish text
 - [ ] 4. TUI: edit/delete an entry from the lists (Enter, confirmation, mouse)

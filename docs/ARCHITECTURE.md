@@ -345,6 +345,7 @@ A `SECURITY.md` with a private disclosure channel is required before the first p
 | 6 | Write-back through outbox and PendingActions (move a Notion card, create an event) | Every external write is approved, audited and retried safely |
 | 7 | OAuth for remote MCP, only if remote access must change mail or calendar data | Threat model reviewed; tokens short-lived and scoped |
 | 8 | Browser automation of the user's own sites (separate process) | Dry run and approval before any change |
+| Later | Activity dashboard: time per app (terminal, browser, video) from Hyprland's active-window events, collected by the daemon, stored locally | Opt-in; data never leaves the machine |
 | Later | Sync between several computers | Not planned yet; the `uid` and event log keep the door open |
 
 ## 17. Decisions and open questions
