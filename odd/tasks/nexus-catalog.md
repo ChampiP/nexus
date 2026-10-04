@@ -28,4 +28,4 @@ data dir `0700` / database `0600`.
 - [x] 2. App: edit/delete entry; catalog use cases (projects, clients, organizations: create, rename, merge, move, delete) (commit 60d9d55)
 - [x] 3. CLI: edit, rm, project/client/org commands, additive JSON fields, Spanish text (commit de417c6)
 - [x] 4. TUI: edit/delete an entry from the lists (Enter, confirmation, mouse) (commit e7894cc)
-- [ ] 5. TUI: catalog screen (organization > client > project), rename/move/delete
+- [x] 5. TUI: catalog screen (organization > client > project), rename/move/delete (commit 1ea7685)
