@@ -13,7 +13,9 @@ import (
 // Tracker describes the use cases required by the command line.
 type Tracker interface {
 	Start(tracking.StartInput) (tracking.Entry, error)
-	StartLike(int64) (tracking.Entry, error)
+	Resume(int64) (tracking.Entry, error)
+	RecentTasks(int) ([]tracking.TaskSummary, error)
+	TaskTotal(string) (int64, error)
 	Stop(int64) error
 	StopLatest() error
 	StopAll() (int, error)
@@ -133,7 +135,7 @@ Sin comando se abre la interfaz interactiva.
 Temporizadores:
   nexus start <título> [-p proyecto] [-d descripción] [--json]   inicia un temporizador
   nexus stop [id] [--all] [--json]                               detiene uno o todos
-  nexus resume <id> [--json]                                     inicia una copia de una tarea
+  nexus resume <id> [--json]                                     continúa la misma tarea con una sesión nueva
   nexus status [--json]                                          muestra lo que está en curso
   nexus ls [--json]                                              lista en curso y recientes
   nexus report [--week]                                          tiempo por proyecto
@@ -147,7 +149,7 @@ Break:
 Servicio:
   nexus daemon                                                   avisa cuando un break vence (lo inicia systemd)
 
-Tareas:
+Tareas (una tarea puede tener varias sesiones; edit, rm y restore actúan sobre la sesión indicada):
   nexus edit <id> [-t título] [-p proyecto] [-d descripción] [--json]
   nexus rm <id> [--json]                                         envía la tarea a la papelera
   nexus restore <id> [--json]                                    la recupera de la papelera
@@ -199,6 +201,14 @@ func elapsed(seconds int64) string {
 		seconds = 0
 	}
 	return fmt.Sprintf("%02d:%02d:%02d", seconds/3600, seconds/60%60, seconds%60)
+}
+
+// totalClock da formato H:MM:SS al tiempo total de una tarea, sin rellenar las horas.
+func totalClock(seconds int64) string {
+	if seconds < 0 {
+		seconds = 0
+	}
+	return fmt.Sprintf("%d:%02d:%02d", seconds/3600, seconds/60%60, seconds%60)
 }
 func humanDuration(seconds int64) string {
 	if seconds < 0 {

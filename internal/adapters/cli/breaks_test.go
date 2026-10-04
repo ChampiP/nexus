@@ -23,8 +23,8 @@ func (t breakTimers) StartBreak(label string) (int64, error) {
 	return e.ID, err
 }
 func (t breakTimers) Stop(id int64) error { return t.tracker.Stop(id) }
-func (t breakTimers) StartLike(id int64) error {
-	_, err := t.tracker.StartLike(id)
+func (t breakTimers) Resume(id int64) error {
+	_, err := t.tracker.Resume(id)
 	return err
 }
 func (t breakTimers) Running(id int64) (bool, error) { return t.tracker.IsRunning(id) }
@@ -150,6 +150,22 @@ func TestBreakStatusExtendEnd(t *testing.T) {
 		t.Fatalf("end = %q", out)
 	}
 	wantOut(t, a.must(t, "break", "status"), "Sin break activo\n")
+}
+
+func TestBreakEndResumePutsSessionOnSameTask(t *testing.T) {
+	a := newBreakApp(t)
+	a.must(t, "start", "Informe")
+	first, _, _, _ := a.tracker.Snapshot()
+	a.must(t, "break", "10", "--stop", "all")
+	a.must(t, "break", "end")
+	running, _, _, _ := a.tracker.Snapshot()
+	if len(running) != 1 || running[0].ID == first[0].ID || running[0].TaskUID != first[0].TaskUID {
+		t.Fatalf("la sesión retomada debe ser de la misma tarea: %+v / %+v", first, running)
+	}
+	tasks, _ := a.tracker.RecentTasks(10)
+	if len(tasks) != 1 || tasks[0].SessionCount != 2 {
+		t.Fatalf("tareas = %+v", tasks)
+	}
 }
 
 func TestBreakEndNoResume(t *testing.T) {

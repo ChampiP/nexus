@@ -44,11 +44,55 @@ CREATE UNIQUE INDEX entries_uid_idx ON entries(uid) WHERE uid IS NOT NULL;
 CREATE INDEX entries_project_id_idx ON entries(project_id);`)
 			return err
 		}},
+		{Module: "tracking", Version: 3, Up: migrateTaskUID},
 	}
 }
 
+// migrateTaskUID agrega task_uid y agrupa las sesiones idénticas existentes en una sola tarea.
+// Es aditiva: no borra ni reescribe ninguna otra columna.
+func migrateTaskUID(tx *sql.Tx) error {
+	if _, err := tx.Exec(`ALTER TABLE entries ADD COLUMN task_uid TEXT; CREATE INDEX entries_task_uid_idx ON entries(task_uid);`); err != nil {
+		return err
+	}
+	// Las filas de la fase 1 aún no tienen uid; se les asigna antes de agrupar.
+	rows, err := tx.Query(`SELECT id FROM entries WHERE uid IS NULL`)
+	if err != nil {
+		return err
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, id := range ids {
+		if _, err := tx.Exec(`UPDATE entries SET uid = ? WHERE id = ?`, ulid.Make().String(), id); err != nil {
+			return err
+		}
+	}
+	// Cada fila es su propia tarea; luego las sesiones de trabajo vivas e idénticas
+	// pasan a la tarea de la más antigua del grupo.
+	_, err = tx.Exec(`
+UPDATE entries SET task_uid = uid;
+UPDATE entries SET task_uid = (
+    SELECT e2.uid FROM entries e2
+    WHERE e2.kind = 'work' AND e2.deleted_at IS NULL
+      AND e2.title = entries.title AND e2.project = entries.project AND e2.description = entries.description
+    ORDER BY e2.started_at, e2.id LIMIT 1)
+WHERE kind = 'work' AND deleted_at IS NULL;`)
+	return err
+}
+
 // Reconcile completes rows written by older binaries: it assigns a uid where missing and links
-// project_id by project name. It is idempotent.
+// task_uid (una tarea propia) y links project_id by project name. It is idempotent.
 func (s *SQLite) Reconcile(resolver ProjectResolver) error {
 	ids, err := s.queryInts(`SELECT id FROM entries WHERE uid IS NULL`)
 	if err != nil {
@@ -68,6 +112,9 @@ func (s *SQLite) Reconcile(resolver ProjectResolver) error {
 		if err := tx.Commit(); err != nil {
 			return fmt.Errorf("reconcile uids: %w", err)
 		}
+	}
+	if _, err := s.db.Exec(`UPDATE entries SET task_uid = uid WHERE task_uid IS NULL`); err != nil {
+		return fmt.Errorf("reconcile task uids: %w", err)
 	}
 	names, err := s.queryStrings(`SELECT DISTINCT project FROM entries WHERE project_id IS NULL AND project <> ''`)
 	if err != nil {
@@ -125,7 +172,10 @@ func (s *SQLite) Insert(entry Entry) (Entry, error) {
 	if entry.Kind == "" {
 		entry.Kind = KindWork
 	}
-	result, err := s.db.Exec(`INSERT INTO entries(uid, kind, title, description, project, project_id, started_at) VALUES (?, ?, ?, ?, ?, NULLIF(?, 0), ?)`, entry.UID, entry.Kind, entry.Title, entry.Description, entry.Project, entry.ProjectID, entry.StartedAt)
+	if entry.TaskUID == "" {
+		entry.TaskUID = entry.UID
+	}
+	result, err := s.db.Exec(`INSERT INTO entries(uid, task_uid, kind, title, description, project, project_id, started_at) VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, 0), ?)`, entry.UID, entry.TaskUID, entry.Kind, entry.Title, entry.Description, entry.Project, entry.ProjectID, entry.StartedAt)
 	if err != nil {
 		return Entry{}, fmt.Errorf("insert timer: %w", err)
 	}
@@ -251,7 +301,7 @@ func (s *SQLite) BreaksSince(since int64) ([]Entry, error) {
 	return s.queryEntries(`SELECT `+entryColumns+` FROM entries WHERE deleted_at IS NULL AND kind = 'break' AND started_at >= ? ORDER BY started_at, id`, since)
 }
 
-const entryColumns = `id, COALESCE(uid, ''), kind, title, description, project, COALESCE(project_id, 0), started_at, ended_at, deleted_at`
+const entryColumns = `id, COALESCE(uid, ''), COALESCE(task_uid, uid, ''), kind, title, description, project, COALESCE(project_id, 0), started_at, ended_at, deleted_at`
 
 // Get returns a live (not deleted) entry or ErrNotFound.
 func (s *SQLite) Get(id int64) (Entry, error) {
@@ -352,7 +402,7 @@ func (s *SQLite) queryEntries(query string, args ...any) ([]Entry, error) {
 	for rows.Next() {
 		var entry Entry
 		var ended, deleted sql.NullInt64
-		if err := rows.Scan(&entry.ID, &entry.UID, &entry.Kind, &entry.Title, &entry.Description, &entry.Project, &entry.ProjectID, &entry.StartedAt, &ended, &deleted); err != nil {
+		if err := rows.Scan(&entry.ID, &entry.UID, &entry.TaskUID, &entry.Kind, &entry.Title, &entry.Description, &entry.Project, &entry.ProjectID, &entry.StartedAt, &ended, &deleted); err != nil {
 			return nil, fmt.Errorf("scan entry: %w", err)
 		}
 		if ended.Valid {

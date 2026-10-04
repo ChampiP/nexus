@@ -14,7 +14,7 @@ import (
 type fakeTimers struct {
 	running  map[int64]bool
 	stopped  [][]int64
-	started  []int64 // ids copiados con StartLike
+	started  []int64 // ids reanudados con Resume
 	nextID   int64
 	breakErr error
 }
@@ -43,7 +43,7 @@ func (f *fakeTimers) StartBreak(label string) (int64, error) {
 	return f.nextID, nil
 }
 func (f *fakeTimers) Stop(id int64) error            { f.running[id] = false; return nil }
-func (f *fakeTimers) StartLike(id int64) error       { f.started = append(f.started, id); return nil }
+func (f *fakeTimers) Resume(id int64) error          { f.started = append(f.started, id); return nil }
 func (f *fakeTimers) Running(id int64) (bool, error) { return f.running[id], nil }
 
 // failingRepo hace fallar Insert para probar el rollback.

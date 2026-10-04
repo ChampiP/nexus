@@ -71,7 +71,7 @@ func TestFreshDatabase(t *testing.T) {
 	}
 	defer db.Close()
 	applied, backup := upgrade(t, db, path)
-	if applied != 4 || backup != "" {
+	if applied != 5 || backup != "" {
 		t.Fatalf("applied = %d, backup = %q", applied, backup)
 	}
 	for file, want := range map[string]os.FileMode{filepath.Dir(path): 0o700, path: 0o600} {
@@ -85,7 +85,7 @@ func TestFreshDatabase(t *testing.T) {
 func TestLegacyDatabaseIsAdoptedWithoutLosingData(t *testing.T) {
 	db, path := legacyDB(t)
 	applied, backup := upgrade(t, db, path)
-	if applied != 4 || backup == "" {
+	if applied != 5 || backup == "" {
 		t.Fatalf("applied = %d, backup = %q", applied, backup)
 	}
 	old, err := sql.Open("sqlite", backup)

@@ -165,14 +165,16 @@ Reglas:
 Organización (p. ej. Holinsys, Emana)
  └─ Cliente (p. ej. Depilab)
      └─ Proyecto (p. ej. Depiloto, Lumirecon)
-         └─ TimeEntry  { título, descripción, kind: work|break, started_at, ended_at, deleted_at }
+         └─ Tarea (task_uid)  { título, descripción }
+             └─ Sesión (fila de entries) { kind: work|break, started_at, ended_at, deleted_at }
 
 Countdown { kind: break|focus|custom, etiqueta, duración, started_at, ends_at, finished_at,
             entry_uid, resume_entry_uids[] }
 Reminder  { regla, next_at, last_done_at }        PendingAction { requested_by, payload, status }
 ```
 
-Un proyecto puede no tener cliente (proyectos personales) y un cliente puede no tener
+Una tarea agrupa sus sesiones con `entries.task_uid`: pausar y reanudar agrega una sesión a la misma
+tarea, y las listas muestran una fila por tarea con su total. Un proyecto puede no tener cliente (proyectos personales) y un cliente puede no tener
 organización. El campo de texto libre actual `entries.project` se migra a `projects` y se conserva
 como columna de compatibilidad durante una versión (ver el plan del catálogo en
 `odd/tasks/nexus-catalog.md`).

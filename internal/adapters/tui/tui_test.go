@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -18,10 +19,11 @@ type testStore struct {
 	recent   []tracking.Entry
 	trash    []tracking.Entry
 	edits    []editCall
-	deleted  []int64
-	restored []int64
-	// likes son los ids que se reanudaron con StartLike.
-	likes   []int64
+	// deleted y restored son las tareas (task_uid) eliminadas y restauradas.
+	deleted  []string
+	restored []string
+	// resumed son los ids que se reanudaron con Resume.
+	resumed []int64
 	editErr error
 	totals  []tracking.ProjectTotal
 	counts  map[int64]int
@@ -30,29 +32,86 @@ type testStore struct {
 }
 
 type editCall struct {
-	id    int64
+	task  string
 	input tracking.EditInput
 }
 
-func removeEntry(entries []tracking.Entry, id int64) ([]tracking.Entry, *tracking.Entry) {
-	for i, entry := range entries {
-		if entry.ID == id {
-			found := entry
-			return append(entries[:i:i], entries[i+1:]...), &found
-		}
+// taskOf es la tarea de una entrada del fake; sin TaskUID cada entrada es su propia tarea.
+func taskOf(e tracking.Entry) string {
+	if e.TaskUID != "" {
+		return e.TaskUID
 	}
-	return entries, nil
+	return fmt.Sprintf("t%d", e.ID)
 }
 
-func (s *testStore) Edit(id int64, input tracking.EditInput) (tracking.Entry, error) {
-	s.edits = append(s.edits, editCall{id, input})
+// takeTask separa de entries las sesiones de la tarea y devuelve el resto y las separadas.
+func takeTask(entries []tracking.Entry, task string) (rest, taken []tracking.Entry) {
+	for _, e := range entries {
+		if taskOf(e) == task {
+			taken = append(taken, e)
+		} else {
+			rest = append(rest, e)
+		}
+	}
+	return rest, taken
+}
+
+// allEntries une en curso y recientes sin repetir ids; las sesiones en curso van primero.
+func (s *testStore) allEntries() []tracking.Entry {
+	seen := map[int64]bool{}
+	var all []tracking.Entry
+	for _, list := range [][]tracking.Entry{s.running, s.recent} {
+		for _, e := range list {
+			if !seen[e.ID] && e.Kind != tracking.KindBreak {
+				seen[e.ID] = true
+				all = append(all, e)
+			}
+		}
+	}
+	return all
+}
+
+func (s *testStore) RecentTasks(limit int) ([]tracking.TaskSummary, error) {
+	now := time.Now().Unix()
+	byTask := map[string]*tracking.TaskSummary{}
+	var order []*tracking.TaskSummary
+	for _, e := range s.allEntries() {
+		key := taskOf(e)
+		task := byTask[key]
+		if task == nil {
+			task = &tracking.TaskSummary{TaskUID: key, Title: e.Title, Project: e.Project, Description: e.Description, LastEntryID: e.ID}
+			byTask[key] = task
+			order = append(order, task)
+		}
+		task.SessionCount++
+		end := now
+		if e.EndedAt != nil {
+			end = *e.EndedAt
+		} else {
+			task.Running, task.RunningEntryID, task.LastEntryID = true, e.ID, e.ID
+		}
+		task.TotalSeconds += end - e.StartedAt
+		task.LastActivity = max(task.LastActivity, end)
+	}
+	var tasks []tracking.TaskSummary
+	for _, task := range order {
+		tasks = append(tasks, *task)
+	}
+	if len(tasks) > limit {
+		tasks = tasks[:limit]
+	}
+	return tasks, nil
+}
+
+func (s *testStore) EditTask(task string, input tracking.EditInput) (tracking.Entry, error) {
+	s.edits = append(s.edits, editCall{task, input})
 	if s.editErr != nil {
 		return tracking.Entry{}, s.editErr
 	}
 	var updated tracking.Entry
 	for _, list := range []*[]tracking.Entry{&s.running, &s.recent} {
 		for i := range *list {
-			if (*list)[i].ID != id {
+			if taskOf((*list)[i]) != task {
 				continue
 			}
 			if input.Title != nil {
@@ -70,31 +129,41 @@ func (s *testStore) Edit(id int64, input tracking.EditInput) (tracking.Entry, er
 	return updated, nil
 }
 
-func (s *testStore) Delete(id int64) error {
-	s.deleted = append(s.deleted, id)
-	var gone *tracking.Entry
-	s.running, gone = removeEntry(s.running, id)
-	var inRecent *tracking.Entry
-	s.recent, inRecent = removeEntry(s.recent, id)
-	if inRecent != nil {
-		gone = inRecent
-	}
-	if gone != nil {
-		s.trash = append(s.trash, *gone)
+func (s *testStore) DeleteTask(task string) error {
+	s.deleted = append(s.deleted, task)
+	var fromRunning, fromRecent []tracking.Entry
+	s.running, fromRunning = takeTask(s.running, task)
+	s.recent, fromRecent = takeTask(s.recent, task)
+	s.trash = append(s.trash, fromRecent...)
+	for _, e := range fromRunning {
+		if !containsID(fromRecent, e.ID) {
+			s.trash = append(s.trash, e)
+		}
 	}
 	return nil
 }
 
-func (s *testStore) Restore(id int64) error {
-	s.restored = append(s.restored, id)
-	var back *tracking.Entry
-	s.trash, back = removeEntry(s.trash, id)
-	if back == nil {
+func containsID(entries []tracking.Entry, id int64) bool {
+	for _, e := range entries {
+		if e.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *testStore) RestoreTask(task string) error {
+	s.restored = append(s.restored, task)
+	var back []tracking.Entry
+	s.trash, back = takeTask(s.trash, task)
+	if len(back) == 0 {
 		return tracking.ErrNotFound
 	}
-	s.recent = append(s.recent, *back)
-	if back.EndedAt == nil {
-		s.running = append(s.running, *back)
+	for _, e := range back {
+		s.recent = append(s.recent, e)
+		if e.EndedAt == nil {
+			s.running = append(s.running, e)
+		}
 	}
 	return nil
 }
@@ -105,25 +174,45 @@ func (s *testStore) Start(input tracking.StartInput) (tracking.Entry, error) {
 	s.running = append(s.running, entry)
 	return entry, nil
 }
-func (s *testStore) StartLike(id int64) (tracking.Entry, error) {
+
+// Resume imita al Tracker: nueva sesión de la misma tarea, salvo que ya tenga una en curso.
+func (s *testStore) Resume(id int64) (tracking.Entry, error) {
 	src, err := s.Get(id)
 	if err != nil {
 		return tracking.Entry{}, err
 	}
-	s.likes = append(s.likes, id)
-	entry := tracking.Entry{ID: 100 + int64(len(s.likes)), Title: src.Title, Project: src.Project, Description: src.Description}
+	for _, e := range s.running {
+		if taskOf(e) == taskOf(src) {
+			return e, tracking.ErrAlreadyRunning
+		}
+	}
+	s.resumed = append(s.resumed, id)
+	entry := tracking.Entry{ID: 100 + int64(len(s.resumed)), TaskUID: taskOf(src), Title: src.Title, Project: src.Project, Description: src.Description, StartedAt: time.Now().Unix()}
 	s.running = append(s.running, entry)
 	return entry, nil
 }
 func (s *testStore) Stop(id int64) error {
 	s.stopped = append(s.stopped, id)
+	end := time.Now().Unix()
 	for i, entry := range s.running {
 		if entry.ID == id {
 			s.running = append(s.running[:i], s.running[i+1:]...)
+			entry.EndedAt = &end
+			s.recent = append([]tracking.Entry{entry}, removeID(s.recent, id)...)
 			break
 		}
 	}
 	return nil
+}
+
+func removeID(entries []tracking.Entry, id int64) []tracking.Entry {
+	var out []tracking.Entry
+	for _, e := range entries {
+		if e.ID != id {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 func (s *testStore) Snapshot() ([]tracking.Entry, int64, []tracking.Entry, error) {
 	return append([]tracking.Entry(nil), s.running...), 0, append([]tracking.Entry(nil), s.recent...), nil

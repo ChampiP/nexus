@@ -28,6 +28,18 @@ type Repository interface {
 	Relink(fromID, toID int64, toName string) error
 	RenameProject(id int64, name string) error
 	CountByProject(projectID int64) (int, error)
+	// RecentTasks agrupa las sesiones de trabajo no eliminadas por tarea, la más reciente primero.
+	RecentTasks(now int64, limit int) ([]TaskSummary, error)
+	// TaskTotal suma los segundos de las sesiones no eliminadas de la tarea, hasta now.
+	TaskTotal(taskUID string, now int64) (int64, error)
+	// RunningInTask devuelve la sesión en curso de la tarea, si hay una.
+	RunningInTask(taskUID string) (Entry, bool, error)
+	// UpdateTask reescribe título, descripción y proyecto de todas las sesiones vivas de la tarea.
+	UpdateTask(taskUID string, entry Entry) error
+	// SoftDeleteTask elimina todas las sesiones vivas de la tarea, deteniendo la que esté en curso.
+	SoftDeleteTask(taskUID string, at int64) error
+	// RestoreTask restaura las sesiones eliminadas junto en el último borrado de la tarea.
+	RestoreTask(taskUID string, resumeSince int64) error
 }
 
 // Clock supplies the current time to Tracker.

@@ -160,14 +160,16 @@ Rules:
 Organization (e.g. Holinsys, Emana)
  └─ Client (e.g. Depilab)
      └─ Project (e.g. Depiloto, Lumirecon)
-         └─ TimeEntry  { title, description, kind: work|break, started_at, ended_at, deleted_at }
+         └─ Task (task_uid)  { title, description }
+             └─ Session (entries row) { kind: work|break, started_at, ended_at, deleted_at }
 
 Countdown { kind: break|focus|custom, label, duration, started_at, ends_at, finished_at,
             entry_uid, resume_entry_uids[] }
 Reminder  { rule, next_at, last_done_at }        PendingAction { requested_by, payload, status }
 ```
 
-A project may have no client (personal projects); a client may have no organization. The current
+A task groups its sessions through `entries.task_uid`: pausing and resuming adds a session to the same
+task, and lists show one row per task with its total. A project may have no client (personal projects); a client may have no organization. The current
 free-text `entries.project` is migrated into `projects` and kept as a compatibility column for
 one release (see the catalog plan in `odd/tasks/nexus-catalog.md`).
 

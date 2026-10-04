@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -122,8 +123,12 @@ func (t trackerTimers) StartBreak(label string) (int64, error) {
 
 func (t trackerTimers) Stop(id int64) error { return t.tracker.Stop(id) }
 
-func (t trackerTimers) StartLike(id int64) error {
-	_, err := t.tracker.StartLike(id)
+// Resume reanuda la tarea de la entrada id; si ya tiene una sesión en curso no hay nada que hacer.
+func (t trackerTimers) Resume(id int64) error {
+	_, err := t.tracker.Resume(id)
+	if errors.Is(err, tracking.ErrAlreadyRunning) {
+		return nil
+	}
 	return err
 }
 

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -16,7 +17,7 @@ const undoWindow = 10 * time.Second
 
 // confirmState representa la confirmación de eliminación pendiente.
 type confirmState struct {
-	entry tracking.Entry
+	task tracking.TaskSummary
 	// button es 0 para Eliminar y 1 para Cancelar (el valor por defecto).
 	button int
 }
@@ -59,10 +60,11 @@ func entryLabels(actions []entryAction) []string {
 // runningActions son los botones de un temporizador en curso.
 var runningActions = []entryAction{entryEdit, entryStop}
 
-// recentActions son los botones de una fila de RECIENTES: una tarea detenida se puede reanudar.
-func recentActions(entry tracking.Entry) []entryAction {
-	if entry.EndedAt == nil {
-		return []entryAction{entryEdit, entryDelete}
+// recentActions son los botones de una fila de RECIENTES: una tarea detenida se puede reanudar
+// y una en curso, detener.
+func recentActions(task tracking.TaskSummary) []entryAction {
+	if task.Running {
+		return []entryAction{entryStop, entryEdit, entryDelete}
 	}
 	return []entryAction{entryResume, entryEdit, entryDelete}
 }
@@ -186,54 +188,63 @@ func (m Model) rowActions() []entryAction {
 	return runningActions
 }
 
-// focusedEntry devuelve la tarea de la fila enfocada.
-func (m Model) focusedEntry() (tracking.Entry, bool) {
+// focusedTask devuelve la tarea de la fila enfocada y, si hay una sesión en curso en esa fila, su id.
+func (m Model) focusedTask() (task tracking.TaskSummary, runningID int64, ok bool) {
 	switch {
 	case m.focus == focusRunningStart && m.focusedRunning < len(m.running):
-		return m.running[m.focusedRunning], true
+		entry := m.running[m.focusedRunning]
+		return m.taskOf(entry), entry.ID, true
 	case m.focus == focusRecent && m.focusedRecent < len(m.recent):
-		return m.recent[m.focusedRecent], true
+		task = m.recent[m.focusedRecent]
+		return task, task.RunningEntryID, true
 	}
-	return tracking.Entry{}, false
+	return tracking.TaskSummary{}, 0, false
+}
+
+// taskOf devuelve el resumen de la tarea de una sesión; si no está en la lista usa solo la sesión.
+func (m Model) taskOf(entry tracking.Entry) tracking.TaskSummary {
+	if task, ok := m.tasks[entry.TaskUID]; ok {
+		return task
+	}
+	return tracking.TaskSummary{TaskUID: entry.TaskUID, Title: entry.Title, Project: entry.Project, Description: entry.Description, LastEntryID: entry.ID, SessionCount: 1}
 }
 
 func (m *Model) activateRowButton() {
-	entry, ok := m.focusedEntry()
+	task, runningID, ok := m.focusedTask()
 	actions := m.rowActions()
 	if !ok || m.rowButton >= len(actions) {
 		return
 	}
 	switch actions[m.rowButton] {
 	case entryResume:
-		m.resume(entry)
+		m.resume(task)
 	case entryEdit:
-		m.openEdit(entry)
+		m.openEdit(task)
 	case entryStop:
-		m.stopFocused()
+		m.stopSession(runningID, task.Title)
 	default:
-		m.askDelete(entry)
+		m.askDelete(task)
 	}
 }
 
-// resume inicia una copia de la tarea detenida, salvo que una idéntica ya esté en curso.
-func (m *Model) resume(entry tracking.Entry) {
-	for _, running := range m.running {
-		if running.Title == entry.Title && running.Project == entry.Project {
-			m.setMessage("«" + entry.Title + "» ya está en curso")
-			return
-		}
+// resume inicia una sesión nueva de la tarea, salvo que ya tenga una en curso.
+func (m *Model) resume(task tracking.TaskSummary) {
+	resumed, err := m.tracker.Resume(task.LastEntryID)
+	if errors.Is(err, tracking.ErrAlreadyRunning) {
+		m.setMessage("«" + task.Title + "» ya está en curso")
+		m.refresh()
+		return
 	}
-	copied, err := m.tracker.StartLike(entry.ID)
 	if err != nil {
 		m.setMessage(errorText("No se pudo reanudar", err))
 		return
 	}
 	m.refresh()
-	m.setMessage("Reanudado: " + copied.Title)
+	m.setMessage("Reanudado: " + resumed.Title)
 }
 
-func (m *Model) askDelete(entry tracking.Entry) {
-	m.confirm = &confirmState{entry: entry, button: 1}
+func (m *Model) askDelete(task tracking.TaskSummary) {
+	m.confirm = &confirmState{task: task, button: 1}
 }
 
 func (m *Model) updateConfirm(key tea.KeyMsg) {
@@ -250,41 +261,41 @@ func (m *Model) updateConfirm(key tea.KeyMsg) {
 }
 
 func (m *Model) activateConfirm(button int) {
-	entry := m.confirm.entry
+	task := m.confirm.task
 	m.confirm = nil
 	if button == 0 {
-		m.deleteEntry(entry)
+		m.deleteTask(task)
 	}
 }
 
-func (m *Model) deleteEntry(entry tracking.Entry) {
-	if err := m.tracker.Delete(entry.ID); err != nil {
+func (m *Model) deleteTask(task tracking.TaskSummary) {
+	if err := m.tracker.DeleteTask(task.TaskUID); err != nil {
 		m.setMessage(errorText("No se pudo eliminar", err))
 		return
 	}
-	m.lastDeleted = &entry
+	m.lastDeleted = &task
 	if m.edit != nil {
 		m.closeEdit()
 	}
 	m.refresh()
-	m.setMessage("Eliminada «" + entry.Title + "»")
+	m.setMessage("Eliminada «" + task.Title + "»")
 	m.undoUntil = m.now.Add(undoWindow)
 }
 
-// restoreLast restaura la última tarea eliminada en la sesión.
+// restoreLast restaura la última tarea eliminada en la sesión, con todas sus sesiones.
 func (m *Model) restoreLast() {
 	if m.lastDeleted == nil {
 		m.setMessage("No hay nada que deshacer")
 		return
 	}
-	entry := *m.lastDeleted
-	if err := m.tracker.Restore(entry.ID); err != nil {
+	task := *m.lastDeleted
+	if err := m.tracker.RestoreTask(task.TaskUID); err != nil {
 		m.setMessage(errorText("No se pudo restaurar", err))
 		return
 	}
 	m.lastDeleted = nil
 	m.refresh()
-	m.setMessage("Restaurada «" + entry.Title + "»")
+	m.setMessage("Restaurada «" + task.Title + "»")
 }
 
 // undoActive indica si el botón [Deshacer] sigue disponible.
@@ -319,12 +330,20 @@ func errorText(prefix string, err error) string {
 // statusBar devuelve el texto de la línea de estado y los botones que lo acompañan.
 func (m Model) statusBar() (string, []string) {
 	if m.confirm != nil {
-		return "¿Eliminar «" + truncate(m.confirm.entry.Title, 30) + "»? Quedará en la papelera.  ", confirmLabels
+		return "¿Eliminar «" + truncate(m.confirm.task.Title, 30) + "» y " + sessionsText(m.confirm.task.SessionCount) + "? Quedará en la papelera.  ", confirmLabels
 	}
 	if m.undoActive() && m.message != "" {
 		return m.message + " · ", undoLabels
 	}
 	return m.message, nil
+}
+
+// sessionsText cuenta las sesiones de una tarea: «su sesión» o «sus N sesiones».
+func sessionsText(n int) string {
+	if n <= 1 {
+		return "su sesión"
+	}
+	return fmt.Sprintf("sus %d sesiones", n)
 }
 
 // statusSelected es el botón resaltado de la barra de estado, o -1 si ninguno.

@@ -20,10 +20,12 @@ type editState struct {
 }
 
 // openEdit reemplaza el formulario superior por el panel de edición precargado con la tarea.
-func (m *Model) openEdit(entry tracking.Entry) {
+// El panel trabaja con una sesión de la tarea (la más reciente): título, proyecto y descripción son comunes.
+func (m *Model) openEdit(task tracking.TaskSummary) {
 	if m.edit != nil {
 		return
 	}
+	entry := tracking.Entry{ID: task.LastEntryID, TaskUID: task.TaskUID, Title: task.Title, Project: task.Project, Description: task.Description}
 	m.edit = &editState{entry: entry, draft: formDraft{m.inputs[0].Value(), m.inputs[2].Value(), m.selectedProject, m.focus}}
 	m.selectedProject = entry.Project
 	m.inputs[0].SetValue(entry.Title)
@@ -72,7 +74,7 @@ func (m *Model) saveEdit() {
 		m.setMessage("Sin cambios")
 		return
 	}
-	updated, err := m.tracker.Edit(entry.ID, input)
+	updated, err := m.tracker.EditTask(entry.TaskUID, input)
 	if err != nil {
 		m.setMessage(errorText("No se pudo guardar", err))
 		return
@@ -91,7 +93,7 @@ func (m *Model) activateEditButton(button focusTarget) {
 	case focusEditSave:
 		m.saveEdit()
 	case focusEditDelete:
-		m.askDelete(m.edit.entry)
+		m.askDelete(m.taskOf(m.edit.entry))
 	case focusEditCancel:
 		m.closeEdit()
 	}

@@ -89,7 +89,7 @@ func TestBreakSeconds(t *testing.T) {
 	}
 }
 
-func TestStartLikeCopiesFields(t *testing.T) {
+func TestResumeCopiesFields(t *testing.T) {
 	now := int64(1000)
 	s, err := openSQLite(filepath.Join(t.TempDir(), "nexus.db"))
 	if err != nil {
@@ -104,12 +104,12 @@ func TestStartLikeCopiesFields(t *testing.T) {
 	if err := tracker.Stop(src.ID); err != nil {
 		t.Fatal(err)
 	}
-	got, err := tracker.StartLike(src.ID)
+	got, err := tracker.Resume(src.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.ID == src.ID || got.Kind != KindWork || got.Title != "Task" || got.Description != "desc" || got.Project != "Proj" || got.ProjectID != 7 || got.StartedAt != 1000 || got.EndedAt != nil {
-		t.Fatalf("StartLike = %+v", got)
+		t.Fatalf("Resume = %+v", got)
 	}
 	stored, err := s.Get(got.ID)
 	if err != nil || stored.ProjectID != 7 || stored.EndedAt != nil {
@@ -118,8 +118,8 @@ func TestStartLikeCopiesFields(t *testing.T) {
 	if err := tracker.Delete(src.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tracker.StartLike(src.ID); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("deleted StartLike error = %v", err)
+	if _, err := tracker.Resume(src.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deleted Resume error = %v", err)
 	}
 }
 

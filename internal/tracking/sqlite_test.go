@@ -21,7 +21,8 @@ func openSQLite(path string) (*SQLite, error) {
 		_, err := tx.Exec(`CREATE TABLE projects (id INTEGER PRIMARY KEY, name TEXT NOT NULL)`)
 		return err
 	}}
-	migrations := append(Migrations()[:1:1], stub, Migrations()[1])
+	migrations := append(Migrations()[:1:1], stub)
+	migrations = append(migrations, Migrations()[1:]...)
 	if _, _, err := platformdb.Migrate(db, path, migrations, time.Now); err != nil {
 		db.Close()
 		return nil, err

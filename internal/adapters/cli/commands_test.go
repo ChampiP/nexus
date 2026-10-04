@@ -368,17 +368,67 @@ func TestProjectsMergesCatalogAndKeepsJSONContract(t *testing.T) {
 	}
 }
 
-func TestResumeCopiesStoppedTask(t *testing.T) {
+func TestResumeContinuesSameTask(t *testing.T) {
 	a := newApp(t)
 	a.mustRun(t, "start", "Informe", "-p", "Trabajo", "-d", "nota")
 	a.mustRun(t, "stop", "1")
-	wantOut(t, a.mustRun(t, "resume", "1"), "reanudado #2 Informe (copia de #1)\n")
+	wantOut(t, a.mustRun(t, "resume", "1"), "reanudado «Informe» (sesión #2, total 0:00:00)\n")
+	_, err := a.run(t, "resume", "1")
+	wantErr(t, err, "«Informe» ya está en curso")
+	out, err := a.run(t, "resume", "2", "--json")
+	wantErr(t, err, "«Informe» ya está en curso")
+	wantOut(t, out, "{\"error\":\"«Informe» ya está en curso\"}\n")
+	a.mustRun(t, "stop", "2")
 	var created map[string]any
 	if err := json.Unmarshal([]byte(a.mustRun(t, "resume", "1", "--json")), &created); err != nil {
 		t.Fatal(err)
 	}
-	if created["id"] != float64(3) || created["title"] != "Informe" || created["project"] != "Trabajo" || created["description"] != "nota" || created["copy_of"] != float64(1) {
+	if created["id"] != float64(3) || created["title"] != "Informe" || created["project"] != "Trabajo" || created["description"] != "nota" || created["copy_of"] != float64(1) || created["task_uid"] == "" || created["total_seconds"] != float64(0) {
 		t.Fatalf("resume JSON = %#v", created)
+	}
+}
+
+func TestTotalClockFormat(t *testing.T) {
+	for seconds, want := range map[int64]string{0: "0:00:00", 8107: "2:15:07", 59: "0:00:59", 360000: "100:00:00", -5: "0:00:00"} {
+		if got := totalClock(seconds); got != want {
+			t.Errorf("totalClock(%d) = %q, quería %q", seconds, got, want)
+		}
+	}
+}
+
+func TestListJSONAddsTaskUIDAndTasks(t *testing.T) {
+	a := newApp(t)
+	a.mustRun(t, "start", "Informe", "-p", "Trabajo")
+	a.mustRun(t, "stop", "1")
+	a.mustRun(t, "resume", "1")
+	var out struct {
+		Running []map[string]any `json:"running"`
+		Recent  []map[string]any `json:"recent"`
+		Tasks   []map[string]any `json:"tasks"`
+	}
+	if err := json.Unmarshal([]byte(a.mustRun(t, "ls", "--json")), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Recent) != 2 || len(out.Running) != 1 || len(out.Tasks) != 1 {
+		t.Fatalf("ls JSON = %+v", out)
+	}
+	task := out.Tasks[0]
+	if out.Recent[0]["task_uid"] == "" || out.Recent[0]["task_uid"] != out.Recent[1]["task_uid"] || out.Running[0]["task_uid"] != task["task_uid"] {
+		t.Fatalf("task_uid no coincide: %+v", out)
+	}
+	if task["title"] != "Informe" || task["project"] != "Trabajo" || task["running"] != true || task["session_count"] != float64(2) || task["running_entry_id"] != float64(2) || task["last_entry_id"] != float64(2) {
+		t.Fatalf("tarea = %#v", task)
+	}
+	for _, key := range []string{"total_seconds", "last_activity", "description"} {
+		if _, ok := task[key]; !ok {
+			t.Errorf("falta %s en %#v", key, task)
+		}
+	}
+	// Los campos existentes siguen ahí.
+	for _, key := range []string{"id", "title", "project", "started_at", "ended_at", "seconds", "uid", "description"} {
+		if _, ok := out.Recent[0][key]; !ok {
+			t.Errorf("falta el campo existente %s", key)
+		}
 	}
 }
 
@@ -396,7 +446,7 @@ func TestResumeErrorsAreSpanish(t *testing.T) {
 }
 
 func TestUsageMentionsResume(t *testing.T) {
-	if !strings.Contains(usageText, "nexus resume <id> [--json]") {
-		t.Fatal("el uso debe documentar resume")
+	if !strings.Contains(usageText, "nexus resume <id> [--json]") || !strings.Contains(usageText, "misma tarea") {
+		t.Fatal("el uso debe documentar que resume continúa la misma tarea")
 	}
 }

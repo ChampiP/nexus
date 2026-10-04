@@ -15,6 +15,7 @@ type statusEntry struct {
 	Elapsed     string `json:"elapsed"`
 	UID         string `json:"uid"`
 	Description string `json:"description"`
+	TaskUID     string `json:"task_uid"`
 }
 type statusOutput struct {
 	Running      []statusEntry `json:"running"`
@@ -32,7 +33,9 @@ type createdEntry struct {
 }
 type resumedOutput struct {
 	createdEntry
-	CopyOf int64 `json:"copy_of"`
+	CopyOf       int64  `json:"copy_of"`
+	TaskUID      string `json:"task_uid"`
+	TotalSeconds int64  `json:"total_seconds"`
 }
 type stoppedOutput struct {
 	Stopped int `json:"stopped"`
@@ -46,10 +49,27 @@ type recentEntry struct {
 	Seconds     int64  `json:"seconds"`
 	UID         string `json:"uid"`
 	Description string `json:"description"`
+	TaskUID     string `json:"task_uid"`
+}
+
+// taskOutput resume una tarea: todas sus sesiones y el tiempo total.
+type taskOutput struct {
+	TaskUID        string `json:"task_uid"`
+	Title          string `json:"title"`
+	Project        string `json:"project"`
+	Description    string `json:"description"`
+	TotalSeconds   int64  `json:"total_seconds"`
+	Running        bool   `json:"running"`
+	RunningEntryID int64  `json:"running_entry_id"`
+	LastEntryID    int64  `json:"last_entry_id"`
+	LastActivity   int64  `json:"last_activity"`
+	SessionCount   int    `json:"session_count"`
 }
 type listOutput struct {
 	Running []statusEntry `json:"running"`
 	Recent  []recentEntry `json:"recent"`
+	// Tasks es aditivo: las mismas entradas agrupadas por tarea.
+	Tasks []taskOutput `json:"tasks"`
 }
 type projectOutput struct {
 	Name     string `json:"name"`
@@ -117,7 +137,7 @@ func presentEntry(entry tracking.Entry) entryOutput {
 }
 
 func presentStatus(entry tracking.Entry, now time.Time) statusEntry {
-	return statusEntry{ID: entry.ID, Title: entry.Title, Project: entry.Project, StartedAt: entry.StartedAt, Elapsed: elapsed(now.Unix() - entry.StartedAt), UID: entry.UID, Description: entry.Description}
+	return statusEntry{ID: entry.ID, Title: entry.Title, Project: entry.Project, StartedAt: entry.StartedAt, Elapsed: elapsed(now.Unix() - entry.StartedAt), UID: entry.UID, Description: entry.Description, TaskUID: entry.TaskUID}
 }
 
 func presentOrg(o catalog.Organization) orgOutput {

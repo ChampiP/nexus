@@ -7,6 +7,7 @@ import (
 )
 
 type memoryRepository struct {
+	Repository   // los métodos de tareas no se usan en estas pruebas
 	entries      []Entry
 	projectUsage []ProjectUsage
 }

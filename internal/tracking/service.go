@@ -79,15 +79,21 @@ func (t *Tracker) Start(input StartInput) (Entry, error) {
 	return entry, nil
 }
 
-// StartLike inicia una entrada de trabajo NUEVA con el título, proyecto y descripción de la entrada id.
-func (t *Tracker) StartLike(id int64) (Entry, error) {
+// Resume inicia una sesión nueva de la tarea a la que pertenece la entrada id: misma tarea, otro intervalo.
+// Si la tarea ya tiene una sesión en curso devuelve ErrAlreadyRunning junto con esa sesión.
+func (t *Tracker) Resume(id int64) (Entry, error) {
 	src, err := t.repository.Get(id)
 	if err != nil {
-		return Entry{}, fmt.Errorf("start like entry #%d: %w", id, err)
+		return Entry{}, fmt.Errorf("resume entry #%d: %w", id, err)
 	}
-	entry, err := t.repository.Insert(Entry{Kind: KindWork, Title: src.Title, Project: src.Project, ProjectID: src.ProjectID, Description: src.Description, StartedAt: t.clock().Unix()})
+	if running, ok, err := t.repository.RunningInTask(src.TaskUID); err != nil {
+		return Entry{}, fmt.Errorf("resume entry #%d: %w", id, err)
+	} else if ok {
+		return running, ErrAlreadyRunning
+	}
+	entry, err := t.repository.Insert(Entry{TaskUID: src.TaskUID, Kind: KindWork, Title: src.Title, Project: src.Project, ProjectID: src.ProjectID, Description: src.Description, StartedAt: t.clock().Unix()})
 	if err != nil {
-		return Entry{}, fmt.Errorf("start like entry #%d: %w", id, err)
+		return Entry{}, fmt.Errorf("resume entry #%d: %w", id, err)
 	}
 	return entry, nil
 }
@@ -334,4 +340,79 @@ func (t *Tracker) Report(since time.Time) ([]ProjectTotal, error) {
 func dayStart(now time.Time) time.Time {
 	year, month, day := now.Date()
 	return time.Date(year, month, day, 0, 0, 0, 0, now.Location())
+}
+
+// RecentTasks devuelve las tareas de trabajo con su tiempo total, la de actividad más reciente primero.
+func (t *Tracker) RecentTasks(limit int) ([]TaskSummary, error) {
+	tasks, err := t.repository.RecentTasks(t.clock().Unix(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("list recent tasks: %w", err)
+	}
+	return tasks, nil
+}
+
+// TaskTotal devuelve el tiempo total de la tarea; una sesión en curso cuenta hasta ahora.
+func (t *Tracker) TaskTotal(taskUID string) (int64, error) {
+	total, err := t.repository.TaskTotal(taskUID, t.clock().Unix())
+	if err != nil {
+		return 0, fmt.Errorf("task total: %w", err)
+	}
+	return total, nil
+}
+
+// EditTask cambia título, proyecto o descripción en todas las sesiones de la tarea y devuelve
+// la sesión más reciente ya actualizada.
+func (t *Tracker) EditTask(taskUID string, in EditInput) (Entry, error) {
+	tasks, err := t.repository.RecentTasks(t.clock().Unix(), 1<<30)
+	if err != nil {
+		return Entry{}, fmt.Errorf("edit task: %w", err)
+	}
+	var latest Entry
+	found := false
+	for _, task := range tasks {
+		if task.TaskUID == taskUID {
+			latest, found = Entry{ID: task.LastEntryID, TaskUID: taskUID, Title: task.Title, Project: task.Project, ProjectID: task.ProjectID, Description: task.Description}, true
+			break
+		}
+	}
+	if !found {
+		return Entry{}, fmt.Errorf("edit task: %w", ErrNotFound)
+	}
+	if in.Title != nil {
+		title := strings.TrimSpace(*in.Title)
+		if title == "" {
+			return Entry{}, ErrEmptyTitle
+		}
+		latest.Title = title
+	}
+	if in.Description != nil {
+		latest.Description = *in.Description
+	}
+	if in.Project != nil {
+		latest.Project = *in.Project
+		if latest.ProjectID, err = t.resolve(latest.Project); err != nil {
+			return Entry{}, fmt.Errorf("edit task: %w", err)
+		}
+	}
+	if err := t.repository.UpdateTask(taskUID, latest); err != nil {
+		return Entry{}, fmt.Errorf("edit task: %w", err)
+	}
+	return latest, nil
+}
+
+// DeleteTask elimina todas las sesiones de la tarea; la que esté en curso se detiene primero.
+func (t *Tracker) DeleteTask(taskUID string) error {
+	if err := t.repository.SoftDeleteTask(taskUID, t.clock().Unix()); err != nil {
+		return fmt.Errorf("delete task: %w", err)
+	}
+	return nil
+}
+
+// RestoreTask restaura las sesiones eliminadas juntas; un deshacer inmediato reanuda la que estaba en curso.
+func (t *Tracker) RestoreTask(taskUID string) error {
+	resumeSince := t.clock().Add(-resumeWindow).Unix()
+	if err := t.repository.RestoreTask(taskUID, resumeSince); err != nil {
+		return fmt.Errorf("restore task: %w", err)
+	}
+	return nil
 }

@@ -242,6 +242,7 @@ func TestHeaderIndicatorRemainingOverdueAndClick(t *testing.T) {
 
 func TestRecentExcludesBreaks(t *testing.T) {
 	store := twoTimers()
+	store.running = nil
 	store.recent = []tracking.Entry{{ID: 5, Kind: tracking.KindBreak, Title: "Descanso largo"}, {ID: 1, Kind: tracking.KindWork, Title: "Informe"}, {ID: 6, Title: "Sin tipo"}}
 	m := breakModel(store, &fakeBreaks{})
 	if len(m.recent) != 2 || m.recent[0].Title != "Informe" || m.recent[1].Title != "Sin tipo" {

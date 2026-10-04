@@ -36,7 +36,8 @@ type Model struct {
 	tracker         Tracker
 	inputs          []textinput.Model
 	running         []tracking.Entry
-	recent          []tracking.Entry
+	recent          []tracking.TaskSummary // tareas de RECIENTES, una fila por tarea
+	tasks           map[string]tracking.TaskSummary
 	totals          []tracking.ProjectTotal
 	todaySeconds    int64
 	week            bool
@@ -46,7 +47,7 @@ type Model struct {
 	rowButton       int
 	edit            *editState
 	confirm         *confirmState
-	lastDeleted     *tracking.Entry
+	lastDeleted     *tracking.TaskSummary
 	undoUntil       time.Time
 	pickerOpen      bool
 	pickerIndex     int
@@ -88,6 +89,12 @@ func NewModel(tracker Tracker, options ...Option) Model {
 	return m
 }
 
+const (
+	// taskLimit acota las tareas que se piden al caso de uso; recentRows, las que se muestran.
+	taskLimit  = 100
+	recentRows = 8
+)
+
 // workEntries descarta los breaks: la pantalla de Temporizadores solo muestra trabajo.
 func workEntries(entries []tracking.Entry) []tracking.Entry {
 	work := make([]tracking.Entry, 0, len(entries))
@@ -108,12 +115,16 @@ func (m Model) Init() tea.Cmd {
 
 func (m *Model) refresh() {
 	m.now = time.Now()
-	running, seconds, recent, err := m.tracker.Snapshot()
+	running, seconds, _, err := m.tracker.Snapshot()
 	if err == nil {
-		m.running, m.todaySeconds, m.recent = running, seconds, workEntries(recent)
-		if len(m.recent) > 8 {
-			m.recent = m.recent[:8]
+		m.running, m.todaySeconds = running, seconds
+	}
+	if tasks, err := m.tracker.RecentTasks(taskLimit); err == nil {
+		m.tasks = make(map[string]tracking.TaskSummary, len(tasks))
+		for _, task := range tasks {
+			m.tasks[task.TaskUID] = task
 		}
+		m.recent = tasks[:min(len(tasks), recentRows)]
 	}
 	m.totals, _ = m.tracker.Report(rangeStart(m.now, m.week))
 	m.loadCatalog()
@@ -292,15 +303,12 @@ func (m *Model) navigate(key tea.KeyMsg) bool {
 	return true
 }
 
-func (m *Model) stopFocused() {
-	if m.focus != focusRunningStart || m.focusedRunning >= len(m.running) {
-		return
-	}
-	entry := m.running[m.focusedRunning]
-	if err := m.tracker.Stop(entry.ID); err != nil {
+// stopSession detiene la sesión en curso id de la tarea title.
+func (m *Model) stopSession(id int64, title string) {
+	if err := m.tracker.Stop(id); err != nil {
 		m.setMessage(errorText("No se pudo detener", err))
 	} else {
-		m.setMessage("Detenido: " + entry.Title)
+		m.setMessage("Detenido: " + title)
 	}
 	m.refresh()
 }

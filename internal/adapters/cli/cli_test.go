@@ -22,7 +22,7 @@ func testTracker(t *testing.T) *tracking.Tracker {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	migrations := append(tracking.Migrations()[:1:1], catalog.Migrations()...)
-	migrations = append(migrations, tracking.Migrations()[1])
+	migrations = append(migrations, tracking.Migrations()[1:]...)
 	if _, _, err := platformdb.Migrate(db, path, migrations, time.Now); err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +91,7 @@ func TestJSONContracts(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &listing); err != nil {
 		t.Fatal(err)
 	}
-	if len(listing) != 2 || len(listing["running"]) == 0 || len(listing["recent"]) == 0 {
+	if len(listing) != 3 || len(listing["running"]) == 0 || len(listing["recent"]) == 0 || len(listing["tasks"]) == 0 {
 		t.Fatalf("ls JSON = %s", out)
 	}
 	out, err = invoke(t, tracker, "projects", "--json")

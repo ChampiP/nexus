@@ -108,7 +108,7 @@ func (s *Service) End(resume bool) (resumed int, err error) {
 		} else if running {
 			continue
 		}
-		if err := s.timers.StartLike(id); err != nil {
+		if err := s.timers.Resume(id); err != nil {
 			return resumed, fmt.Errorf("resume entry #%d: %w", id, err)
 		}
 		resumed++

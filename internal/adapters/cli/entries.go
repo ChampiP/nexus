@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -55,28 +56,35 @@ func runStart(args []string, tracker Tracker, stdout io.Writer) error {
 	return err
 }
 
-// runResume inicia una tarea nueva copiando título, proyecto y descripción de la tarea id.
+// runResume inicia una sesión nueva de la tarea a la que pertenece la entrada id.
 func runResume(args []string, tracker Tracker, stdout io.Writer) error {
 	jsonMode := contains(args, "--json")
 	parsed, err := parseArgs(args, nil, jsonFlags)
 	if err == nil && len(parsed.positional) != 1 {
 		err = fmt.Errorf("uso: nexus resume <id> [--json]")
 	}
-	var id int64
+	var id, total int64
 	var entry tracking.Entry
 	if err == nil {
 		id, err = parseID(parsed.positional[0])
 	}
 	if err == nil {
-		entry, err = tracker.StartLike(id)
+		entry, err = tracker.Resume(id)
+		if errors.Is(err, tracking.ErrAlreadyRunning) {
+			// En este caso Resume devuelve la sesión en curso, de donde sale el título.
+			err = fmt.Errorf("«%s» ya está en curso", entry.Title)
+		}
+	}
+	if err == nil {
+		total, err = tracker.TaskTotal(entry.TaskUID)
 	}
 	if err != nil {
 		return commandError(localize(err), jsonMode, stdout)
 	}
 	if jsonMode {
-		return json.NewEncoder(stdout).Encode(resumedOutput{createdEntry{entry.ID, entry.Title, entry.Project, entry.Description, entry.StartedAt}, id})
+		return json.NewEncoder(stdout).Encode(resumedOutput{createdEntry{entry.ID, entry.Title, entry.Project, entry.Description, entry.StartedAt}, id, entry.TaskUID, total})
 	}
-	_, err = fmt.Fprintf(stdout, "reanudado #%d %s (copia de #%d)\n", entry.ID, entry.Title, id)
+	_, err = fmt.Fprintf(stdout, "reanudado «%s» (sesión #%d, total %s)\n", entry.Title, entry.ID, totalClock(total))
 	return err
 }
 
@@ -200,7 +208,14 @@ func runList(args []string, tracker Tracker, stdout io.Writer) error {
 		return err
 	}
 	now := time.Now()
-	output := listOutput{Running: make([]statusEntry, 0, len(running)), Recent: make([]recentEntry, 0, len(recent))}
+	tasks, err := tracker.RecentTasks(trashLimit)
+	if err != nil {
+		return err
+	}
+	output := listOutput{Running: make([]statusEntry, 0, len(running)), Recent: make([]recentEntry, 0, len(recent)), Tasks: make([]taskOutput, 0, len(tasks))}
+	for _, task := range tasks {
+		output.Tasks = append(output.Tasks, taskOutput{task.TaskUID, task.Title, task.Project, task.Description, task.TotalSeconds, task.Running, task.RunningEntryID, task.LastEntryID, task.LastActivity, task.SessionCount})
+	}
 	for _, entry := range running {
 		output.Running = append(output.Running, presentStatus(entry, now))
 	}
@@ -209,7 +224,7 @@ func runList(args []string, tracker Tracker, stdout io.Writer) error {
 		if entry.EndedAt != nil {
 			seconds = *entry.EndedAt - entry.StartedAt
 		}
-		output.Recent = append(output.Recent, recentEntry{entry.ID, entry.Title, recentProject(entry), entry.StartedAt, entry.EndedAt, seconds, entry.UID, entry.Description})
+		output.Recent = append(output.Recent, recentEntry{entry.ID, entry.Title, recentProject(entry), entry.StartedAt, entry.EndedAt, seconds, entry.UID, entry.Description, entry.TaskUID})
 	}
 	if jsonMode {
 		return json.NewEncoder(stdout).Encode(output)
