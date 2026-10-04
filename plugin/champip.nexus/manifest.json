@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "id": "champip.nexus",
+  "name": "Nexus",
+  "version": "1.0.0",
+  "author": "champip",
+  "description": "Time tracker status: running timers and hours tracked today",
+  "kinds": ["bar-widget"],
+  "entryPoints": { "barWidget": "BarWidget.qml" },
+  "barWidget": {
+    "displayName": "Nexus",
+    "description": "Running timers and hours tracked today",
+    "category": "Time",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}
