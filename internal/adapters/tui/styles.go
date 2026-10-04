@@ -14,6 +14,11 @@ var (
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(accent)
 	urgent     = lipgloss.AdaptiveColor{Light: "#B91C1C", Dark: "#F87171"}
 	label      = lipgloss.NewStyle().Foreground(muted)
+	// Resaltado del foco: el botón enfocado lleva fondo de acento y la fila enfocada un fondo sutil.
+	focusInk    = lipgloss.AdaptiveColor{Light: "#FFFFFF", Dark: "#1B1B2F"}
+	rowBg       = lipgloss.AdaptiveColor{Light: "#EDEBFF", Dark: "#2A2B3D"}
+	focusButton = lipgloss.NewStyle().Bold(true).Foreground(focusInk).Background(accent)
+	focusRow    = lipgloss.NewStyle().Background(rowBg)
 )
 
 func rangeStart(now time.Time, week bool) time.Time {

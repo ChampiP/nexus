@@ -489,37 +489,54 @@ func (m *Model) switchScreen(to screen) {
 	m.refresh()
 }
 
-// catStop es una parada del anillo de foco de la pantalla de catálogo.
-type catStop struct {
-	focus catFocus
-	row   int
-}
+// Secciones de la pantalla de catálogo; PgUp/PgDn saltan de una a otra.
+const (
+	catSecTabs = iota
+	catSecTree
+	catSecActions
+)
 
-func (m Model) catStops() []catStop {
-	stops := []catStop{{catFocusTabs, 0}}
+// catalogGrid describe los elementos enfocables del catálogo como filas.
+func (m Model) catalogGrid() navGrid {
+	grid := navGrid{{section: catSecTabs, pick: 0, cells: []navCell{{int(catFocusTabs), 0, 0}}}}
 	for i, r := range m.cat.rows {
-		if r.kind != catHeader {
-			stops = append(stops, catStop{catFocusRow, i})
+		if r.kind == catHeader {
+			continue
 		}
+		cells := make([]navCell, len(rowActions(r)))
+		for b := range cells {
+			cells[b] = navCell{int(catFocusRow), i, b}
+		}
+		grid = append(grid, navRow{section: catSecTree, pick: -1, cells: cells})
 	}
-	return append(stops, catStop{catFocusAdd, 0}, catStop{catFocusToggle, 0})
+	adds := make([]navCell, len(addLabels))
+	for b := range adds {
+		adds[b] = navCell{int(catFocusAdd), 0, b}
+	}
+	return append(grid,
+		navRow{section: catSecActions, pick: -1, cells: adds},
+		navRow{section: catSecActions, pick: -1, cells: []navCell{{int(catFocusToggle), 0, 0}}})
 }
 
-func (m *Model) moveCatalogFocus(step int) {
+// catalogCell es la celda que corresponde al foco actual.
+func (m Model) catalogCell() navCell {
+	c := m.cat
+	switch c.focus {
+	case catFocusRow:
+		return navCell{int(c.focus), c.row, c.button}
+	case catFocusAdd:
+		return navCell{int(c.focus), 0, c.button}
+	}
+	return navCell{int(c.focus), 0, 0}
+}
+
+// goToCatalog pasa el foco a la celda indicada.
+func (m *Model) goToCatalog(cell navCell) {
 	c := &m.cat
-	stops := m.catStops()
-	at := 0
-	for i, s := range stops {
-		if s.focus == c.focus && (s.focus != catFocusRow || s.row == c.row) {
-			at = i
-			break
-		}
+	c.focus, c.row, c.button = catFocus(cell.kind), cell.index, cell.col
+	if c.focus != catFocusRow {
+		c.row = min(c.row, max(0, len(c.rows)-1))
 	}
-	next := stops[min(max(at+step, 0), len(stops)-1)]
-	if next.focus != c.focus || next.row != c.row {
-		c.button = 0
-	}
-	c.focus, c.row = next.focus, next.row
 	m.revealCatalog()
 }
 
@@ -575,25 +592,12 @@ func (m *Model) updateCatalogKey(key tea.KeyMsg) tea.Cmd {
 		c.input, cmd = c.input.Update(key)
 		return cmd
 	}
-	switch key.Type {
-	case tea.KeyUp, tea.KeyShiftTab:
-		m.moveCatalogFocus(-1)
-	case tea.KeyDown, tea.KeyTab:
-		m.moveCatalogFocus(1)
-	case tea.KeyLeft, tea.KeyRight:
-		step := 1
-		if key.Type == tea.KeyLeft {
-			step = -1
-		}
-		switch c.focus {
-		case catFocusTabs:
-			m.stepScreen(key.Type)
-		case catFocusRow:
-			c.button = min(max(c.button+step, 0), len(rowLabels(c.rows[c.row]))-1)
-		case catFocusAdd:
-			c.button = min(max(c.button+step, 0), len(addLabels)-1)
-		}
-	case tea.KeyEnter:
+	if c.focus == catFocusTabs && m.stepScreen(key.Type) {
+		return nil
+	}
+	if target, ok := m.catalogGrid().move(m.catalogCell(), key.Type); ok {
+		m.goToCatalog(target)
+	} else if key.Type == tea.KeyEnter {
 		m.activateCatalogFocus()
 	}
 	return nil

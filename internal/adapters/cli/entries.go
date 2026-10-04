@@ -55,6 +55,31 @@ func runStart(args []string, tracker Tracker, stdout io.Writer) error {
 	return err
 }
 
+// runResume inicia una tarea nueva copiando título, proyecto y descripción de la tarea id.
+func runResume(args []string, tracker Tracker, stdout io.Writer) error {
+	jsonMode := contains(args, "--json")
+	parsed, err := parseArgs(args, nil, jsonFlags)
+	if err == nil && len(parsed.positional) != 1 {
+		err = fmt.Errorf("uso: nexus resume <id> [--json]")
+	}
+	var id int64
+	var entry tracking.Entry
+	if err == nil {
+		id, err = parseID(parsed.positional[0])
+	}
+	if err == nil {
+		entry, err = tracker.StartLike(id)
+	}
+	if err != nil {
+		return commandError(localize(err), jsonMode, stdout)
+	}
+	if jsonMode {
+		return json.NewEncoder(stdout).Encode(resumedOutput{createdEntry{entry.ID, entry.Title, entry.Project, entry.Description, entry.StartedAt}, id})
+	}
+	_, err = fmt.Fprintf(stdout, "reanudado #%d %s (copia de #%d)\n", entry.ID, entry.Title, id)
+	return err
+}
+
 func commandError(err error, jsonMode bool, stdout io.Writer) error {
 	if err == nil {
 		return nil

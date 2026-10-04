@@ -37,8 +37,6 @@ type screenLayout struct {
 
 // Etiquetas de los botones; el orden define su índice en rowButton.
 var (
-	runningLabels   = []string{"✎ Editar", "■ Detener"}
-	recentLabels    = []string{"✎ Editar", "✕ Eliminar"}
 	editLabels      = []string{"Guardar", "Eliminar", "Cancelar"}
 	confirmLabels   = []string{"Eliminar", "Cancelar"}
 	undoLabels      = []string{"Deshacer"}
@@ -130,7 +128,7 @@ func (m Model) computeLayout() screenLayout {
 	}
 	for i := 0; i < visible; i++ {
 		rowY := l.runningY + 1 + i
-		l.running = append(l.running, rowZones{row: rect{0, rowY, width, 1}, buttons: rightButtonRects(rowY, width, runningLabels)})
+		l.running = append(l.running, rowZones{row: rect{0, rowY, width, 1}, buttons: rightButtonRects(rowY, width, entryLabels(runningActions))})
 	}
 	l.tabsY = l.runningY + 1 + visible + 1
 	l.today = rect{0, l.tabsY, 12, 1}
@@ -153,7 +151,7 @@ func (l *screenLayout) fillDashboard(m Model, width int) {
 	right := max(30, width-2)
 	for i := 0; i < count; i++ {
 		rowY := l.recentY + i
-		l.recent = append(l.recent, rowZones{row: rect{0, rowY, width, 1}, buttons: rightButtonRects(rowY, right, recentLabels)})
+		l.recent = append(l.recent, rowZones{row: rect{0, rowY, width, 1}, buttons: rightButtonRects(rowY, right, entryLabels(recentActions(m.recent[i])))})
 	}
 	recentLines := count
 	if len(m.recent) == 0 {
@@ -199,7 +197,7 @@ func renderTabs(screens []screen, active screen, focused bool) string {
 		if s == active {
 			style = lipgloss.NewStyle().Bold(true).Foreground(accent)
 			if focused {
-				style = style.Reverse(true)
+				style = focusButton
 			}
 		}
 		parts[i] = style.Render(tabText(s, s == active))

@@ -26,13 +26,11 @@ func (m Model) catalogView() string {
 		lines[zone.row.y] = m.renderCatalogRow(l.first+i, zone, width)
 	}
 	lines[l.addY] = m.renderAddRow(l)
-	toggle := buttonText(toggleLabel(c.showArchived))
+	toggleSelected := -1
 	if c.focus == catFocusToggle {
-		toggle = lipgloss.NewStyle().Foreground(accent).Bold(true).Reverse(true).Render(toggle)
-	} else {
-		toggle = lipgloss.NewStyle().Foreground(accent).Render(toggle)
+		toggleSelected = 0
 	}
-	lines[l.toggleY] = "  " + toggle
+	lines[l.toggleY] = "  " + renderButtons([]string{toggleLabel(c.showArchived)}, toggleSelected)
 	if c.edit != nil && c.edit.create {
 		lines[l.addY] = "  " + label.Render(createPrompt(c.edit.kind)) + c.input.View()
 	}
@@ -120,7 +118,7 @@ func (m Model) renderCatalogRow(index int, zone rowZones, width int) string {
 				text += compact
 			}
 		}
-		return composeRow(text, 0, zone.buttons, rowLabels(r), c.button)
+		return composeRow(text, 0, zone.buttons, rowLabels(r), c.button, true)
 	}
 	if stats == "" {
 		return left + name
@@ -143,7 +141,7 @@ func (m Model) catalogHint() string {
 	case catFocusTabs:
 		return "←→ o Enter cambiar de pantalla · ↓ continuar · clic en una pestaña"
 	case catFocusRow:
-		return "↑↓ mover · ←→ elegir acción · Enter ejecutar · Esc volver"
+		return "↑↓ mover · ←→ elegir acción · Enter ejecutar · PgUp/PgDn sección · Esc volver"
 	}
 	return "↑↓ mover · ←→ elegir · Enter ejecutar · Esc volver"
 }

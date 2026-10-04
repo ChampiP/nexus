@@ -21,67 +21,124 @@ type confirmState struct {
 	button int
 }
 
-// focusStop es una parada del anillo de foco: un tipo de destino y, en filas, su índice.
-type focusStop struct {
-	kind  focusTarget
-	index int
+// Secciones de la pantalla de Temporizadores; PgUp/PgDn saltan de una a otra.
+const (
+	secTabs = iota
+	secForm
+	secRunning
+	secPeriod
+	secRecent
+	secUndo
+)
+
+// secButtons es la sección de botones del panel de edición, que no coexiste con las de la lista.
+const secButtons = secRunning
+
+// entryAction es un botón en línea de una fila de tarea; las etiquetas fijan su orden.
+type entryAction int
+
+const (
+	entryResume entryAction = iota
+	entryEdit
+	entryStop
+	entryDelete
+)
+
+func (a entryAction) label() string {
+	return [...]string{"▶ Reanudar", "✎ Editar", "■ Detener", "✕ Eliminar"}[a]
 }
 
-func (m Model) focusRing() []focusStop {
+func entryLabels(actions []entryAction) []string {
+	labels := make([]string, len(actions))
+	for i, a := range actions {
+		labels[i] = a.label()
+	}
+	return labels
+}
+
+// runningActions son los botones de un temporizador en curso.
+var runningActions = []entryAction{entryEdit, entryStop}
+
+// recentActions son los botones de una fila de RECIENTES: una tarea detenida se puede reanudar.
+func recentActions(entry tracking.Entry) []entryAction {
+	if entry.EndedAt == nil {
+		return []entryAction{entryEdit, entryDelete}
+	}
+	return []entryAction{entryResume, entryEdit, entryDelete}
+}
+
+// timersGrid describe los elementos enfocables de Temporizadores como filas; es el único lugar que fija su orden.
+func (m Model) timersGrid() navGrid {
+	one := func(section int, kind focusTarget) navRow {
+		return navRow{section: section, pick: -1, cells: []navCell{{int(kind), 0, 0}}}
+	}
 	if m.edit != nil {
-		return []focusStop{{focusTitle, 0}, {focusProject, 0}, {focusDescription, 0}, {focusEditSave, 0}, {focusEditDelete, 0}, {focusEditCancel, 0}}
-	}
-	var stops []focusStop
-	if m.tabsVisible() {
-		stops = append(stops, focusStop{focusTabs, 0})
-	}
-	stops = append(stops, focusStop{focusTitle, 0}, focusStop{focusProject, 0}, focusStop{focusDescription, 0}, focusStop{focusStart, 0})
-	for i := range m.running {
-		stops = append(stops, focusStop{focusRunningStart, i})
-	}
-	stops = append(stops, focusStop{focusToday, 0}, focusStop{focusWeek, 0})
-	for i := range m.computeLayout().recent {
-		stops = append(stops, focusStop{focusRecent, i})
-	}
-	if m.undoActive() {
-		stops = append(stops, focusStop{focusUndo, 0})
-	}
-	return stops
-}
-
-func (m Model) currentStop() focusStop {
-	switch m.focus {
-	case focusRunningStart:
-		return focusStop{m.focus, m.focusedRunning}
-	case focusRecent:
-		return focusStop{m.focus, m.focusedRecent}
-	}
-	return focusStop{m.focus, 0}
-}
-
-func (m *Model) moveFocus(step int) {
-	ring := m.focusRing()
-	at := 0
-	current := m.currentStop()
-	for i, stop := range ring {
-		if stop == current {
-			at = i
-			break
+		return navGrid{
+			one(secForm, focusTitle), one(secForm, focusProject), one(secForm, focusDescription),
+			{section: secButtons, pick: -1, cells: []navCell{{int(focusEditSave), 0, 0}, {int(focusEditDelete), 0, 1}, {int(focusEditCancel), 0, 2}}},
 		}
 	}
-	at = min(max(at+step, 0), len(ring)-1)
-	stop := ring[at]
-	previous := m.focus
-	if stop != current {
-		m.rowButton = 0
+	var grid navGrid
+	if m.tabsVisible() {
+		// Las pestañas son opciones excluyentes: ←/→ cambian de pantalla.
+		grid = append(grid, navRow{section: secTabs, pick: 0, cells: []navCell{{int(focusTabs), 0, 0}}})
 	}
-	m.focus = stop.kind
-	switch stop.kind {
+	grid = append(grid, one(secForm, focusTitle), one(secForm, focusProject), one(secForm, focusDescription), one(secForm, focusStart))
+	for i := range m.running {
+		cells := make([]navCell, len(runningActions))
+		for b := range cells {
+			cells[b] = navCell{int(focusRunningStart), i, b}
+		}
+		grid = append(grid, navRow{section: secRunning, pick: -1, cells: cells})
+	}
+	pick := 0
+	if m.week {
+		pick = 1
+	}
+	grid = append(grid, navRow{section: secPeriod, pick: pick, cells: []navCell{{int(focusToday), 0, 0}, {int(focusWeek), 0, 1}}})
+	for i, zone := range m.computeLayout().recent {
+		cells := make([]navCell, len(zone.buttons))
+		for b := range cells {
+			cells[b] = navCell{int(focusRecent), i, b}
+		}
+		grid = append(grid, navRow{section: secRecent, pick: -1, cells: cells})
+	}
+	if m.undoActive() {
+		grid = append(grid, one(secUndo, focusUndo))
+	}
+	return grid
+}
+
+// currentCell es la celda que corresponde al foco actual.
+func (m Model) currentCell() navCell {
+	switch m.focus {
 	case focusRunningStart:
-		m.focusedRunning = stop.index
+		return navCell{int(m.focus), m.focusedRunning, m.rowButton}
+	case focusRecent:
+		return navCell{int(m.focus), m.focusedRecent, m.rowButton}
+	case focusWeek:
+		return navCell{int(m.focus), 0, 1}
+	case focusEditSave, focusEditDelete, focusEditCancel:
+		return navCell{int(m.focus), 0, int(m.focus - focusEditSave)}
+	}
+	return navCell{int(m.focus), 0, 0}
+}
+
+// goTo pasa el foco a la celda indicada.
+func (m *Model) goTo(c navCell) {
+	previous := m.focus
+	m.focus = focusTarget(c.kind)
+	switch m.focus {
+	case focusRunningStart:
+		m.focusedRunning, m.rowButton = c.index, c.col
 		m.revealRunning()
 	case focusRecent:
-		m.focusedRecent = stop.index
+		m.focusedRecent, m.rowButton = c.index, c.col
+	case focusToday, focusWeek:
+		if week := m.focus == focusWeek; week != m.week {
+			m.week = week
+			m.refresh()
+		}
 	}
 	if m.focus == focusProject {
 		m.closeProjectPicker()
@@ -115,15 +172,18 @@ func (m *Model) clampFocus() {
 		m.focus == focusUndo && !m.undoActive():
 		m.focus = focusToday
 	}
-	m.rowButton = min(m.rowButton, max(0, len(m.rowButtons())-1))
+	m.rowButton = min(m.rowButton, max(0, len(m.rowActions())-1))
 }
 
-// rowButtons devuelve las etiquetas de los botones de la fila enfocada.
-func (m Model) rowButtons() []string {
+// rowActions devuelve los botones de la fila enfocada.
+func (m Model) rowActions() []entryAction {
 	if m.focus == focusRecent {
-		return recentLabels
+		if m.focusedRecent < len(m.recent) {
+			return recentActions(m.recent[m.focusedRecent])
+		}
+		return nil
 	}
-	return runningLabels
+	return runningActions
 }
 
 // focusedEntry devuelve la tarea de la fila enfocada.
@@ -137,34 +197,39 @@ func (m Model) focusedEntry() (tracking.Entry, bool) {
 	return tracking.Entry{}, false
 }
 
-// updateRowKey procesa ←/→/Enter sobre una fila; devuelve false si la tecla no le corresponde.
-func (m *Model) updateRowKey(key tea.KeyMsg) bool {
-	switch key.Type {
-	case tea.KeyLeft:
-		m.rowButton = max(0, m.rowButton-1)
-	case tea.KeyRight:
-		m.rowButton = min(len(m.rowButtons())-1, m.rowButton+1)
-	case tea.KeyEnter:
-		m.activateRowButton()
-	default:
-		return false
-	}
-	return true
-}
-
 func (m *Model) activateRowButton() {
 	entry, ok := m.focusedEntry()
-	if !ok {
+	actions := m.rowActions()
+	if !ok || m.rowButton >= len(actions) {
 		return
 	}
-	switch {
-	case m.rowButton == 0:
+	switch actions[m.rowButton] {
+	case entryResume:
+		m.resume(entry)
+	case entryEdit:
 		m.openEdit(entry)
-	case m.focus == focusRunningStart:
+	case entryStop:
 		m.stopFocused()
 	default:
 		m.askDelete(entry)
 	}
+}
+
+// resume inicia una copia de la tarea detenida, salvo que una idéntica ya esté en curso.
+func (m *Model) resume(entry tracking.Entry) {
+	for _, running := range m.running {
+		if running.Title == entry.Title && running.Project == entry.Project {
+			m.setMessage("«" + entry.Title + "» ya está en curso")
+			return
+		}
+	}
+	copied, err := m.tracker.StartLike(entry.ID)
+	if err != nil {
+		m.setMessage(errorText("No se pudo reanudar", err))
+		return
+	}
+	m.refresh()
+	m.setMessage("Reanudado: " + copied.Title)
 }
 
 func (m *Model) askDelete(entry tracking.Entry) {
@@ -273,30 +338,45 @@ func (m Model) statusSelected() int {
 	return -1
 }
 
-// renderButtons dibuja botones [Etiqueta]; el resaltado usa video inverso, no solo color.
+// renderButtons dibuja botones [Etiqueta]; el enfocado lleva fondo de acento, no solo color.
 func renderButtons(labels []string, selected int) string {
+	return renderButtonsOn(labels, selected, false)
+}
+
+// renderButtonsOn es renderButtons para una fila enfocada, con el fondo sutil también entre botones.
+func renderButtonsOn(labels []string, selected int, rowFocused bool) string {
+	base := lipgloss.NewStyle().Foreground(accent)
+	separator := buttonSeparator
+	if rowFocused {
+		base = base.Background(rowBg)
+		separator = focusRow.Render(buttonSeparator)
+	}
 	parts := make([]string, len(labels))
 	for i, label := range labels {
-		style := lipgloss.NewStyle().Foreground(accent)
+		style := base
 		if i == selected {
-			style = style.Bold(true).Reverse(true)
+			style = focusButton
 		}
 		parts[i] = style.Render(buttonText(label))
 	}
-	return strings.Join(parts, buttonSeparator)
+	return strings.Join(parts, separator)
 }
 
 // composeRow une el texto de una fila con sus botones alineados a la derecha, según las zonas del layout.
-func composeRow(text string, x0 int, zones []rect, labels []string, selected int) string {
+// Una fila enfocada se dibuja con fondo sutil.
+func composeRow(text string, x0 int, zones []rect, labels []string, selected int, focused bool) string {
 	room := max(1, zones[0].x-x0-1)
 	text = truncate(text, room)
-	padding := max(1, zones[0].x-x0-lipgloss.Width(text))
-	return text + strings.Repeat(" ", padding) + renderButtons(labels, selected)
+	padding := strings.Repeat(" ", max(1, zones[0].x-x0-lipgloss.Width(text)))
+	if focused {
+		return focusRow.Render(text+padding) + renderButtonsOn(labels, selected, true)
+	}
+	return text + padding + renderButtons(labels, selected)
 }
 
 // selectedButton devuelve el botón resaltado de la fila (index, kind), o -1 si la fila no tiene el foco.
 func (m Model) selectedButton(kind focusTarget, index int) int {
-	if m.focus == kind && m.currentStop().index == index {
+	if m.focus == kind && m.currentCell().index == index {
 		return m.rowButton
 	}
 	return -1

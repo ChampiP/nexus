@@ -232,9 +232,9 @@ func clickAt(t *testing.T, m Model, r rect) Model {
 
 func TestTabsAreFirstFocusStopAndSwitchScreens(t *testing.T) {
 	m, _, _ := newCatalogModel(t)
-	ring := m.focusRing()
-	if ring[0].kind != focusTabs {
-		t.Fatalf("la primera parada debe ser la barra de pestañas: %+v", ring[0])
+	grid := m.timersGrid()
+	if grid[0].cells[0].kind != int(focusTabs) {
+		t.Fatalf("la primera fila debe ser la barra de pestañas: %+v", grid[0])
 	}
 	m = goToTabs(t, m)
 	if m.focus != focusTabs {
@@ -260,8 +260,8 @@ func TestTabsAreFirstFocusStopAndSwitchScreens(t *testing.T) {
 
 func TestTimersScreenWithoutCatalogHasNoTabs(t *testing.T) {
 	m := NewModel(&testStore{})
-	for _, stop := range m.focusRing() {
-		if stop.kind == focusTabs {
+	for _, row := range m.timersGrid() {
+		if row.cells[0].kind == int(focusTabs) {
 			t.Fatal("sin catálogo no debe haber pestañas")
 		}
 	}

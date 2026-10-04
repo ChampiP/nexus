@@ -187,6 +187,75 @@ func (m *Model) openBreakPage() {
 	m.syncBreakFocus()
 }
 
+// Secciones de la pantalla de break; PgUp/PgDn saltan de una a otra.
+const (
+	brkSecTabs = iota
+	brkSecMain // tarjeta del break activo, o duración y campo «Otro»
+	brkSecTimers
+	brkSecStart
+)
+
+// Tipos de celda de la pantalla de break; en brkForm el índice es la fila del formulario.
+const (
+	brkTabs = iota
+	brkAction
+	brkForm
+)
+
+// breakGrid describe los elementos enfocables de la pantalla de break como filas.
+func (m Model) breakGrid() navGrid {
+	grid := navGrid{{section: brkSecTabs, pick: 0, cells: []navCell{{brkTabs, 0, 0}}}}
+	if m.brk != nil {
+		actions := make([]navCell, len(breakActionLabels))
+		for i := range actions {
+			actions[i] = navCell{brkAction, 0, i}
+		}
+		return append(grid, navRow{section: brkSecMain, pick: -1, cells: actions})
+	}
+	f := m.bp.form
+	durations := make([]navCell, len(breakDurationLabels))
+	for i := range durations {
+		durations[i] = navCell{brkForm, breakRowDuration, i}
+	}
+	// Las duraciones son opciones excluyentes: ←/→ cambian la elegida.
+	grid = append(grid,
+		navRow{section: brkSecMain, pick: f.choice, cells: durations},
+		navRow{section: brkSecMain, pick: -1, cells: []navCell{{brkForm, breakRowCustom, 0}}})
+	for i := range f.timers {
+		grid = append(grid, navRow{section: brkSecTimers, pick: -1, cells: []navCell{{brkForm, breakRowFirst + i, 0}}})
+	}
+	return append(grid, navRow{section: brkSecStart, pick: -1, cells: []navCell{{brkForm, f.buttonsRow(), 0}}})
+}
+
+// breakCell es la celda que corresponde al foco actual.
+func (m Model) breakCell() navCell {
+	p := m.bp
+	switch {
+	case p.onTabs:
+		return navCell{brkTabs, 0, 0}
+	case m.brk != nil:
+		return navCell{brkAction, 0, p.action}
+	case p.form.row == breakRowDuration:
+		return navCell{brkForm, breakRowDuration, p.form.choice}
+	}
+	return navCell{brkForm, p.form.row, 0}
+}
+
+// goToBreak pasa el foco a la celda indicada.
+func (m *Model) goToBreak(c navCell) {
+	p := &m.bp
+	p.onTabs = c.kind == brkTabs
+	switch c.kind {
+	case brkAction:
+		p.action = c.col
+	case brkForm:
+		p.form.setRow(c.index)
+		if c.index == breakRowDuration {
+			p.form.choice = c.col
+		}
+	}
+}
+
 // updateBreakKey procesa una tecla en la pantalla de break.
 func (m *Model) updateBreakKey(key tea.KeyMsg) tea.Cmd {
 	if key.Type == tea.KeyEsc {
@@ -195,23 +264,30 @@ func (m *Model) updateBreakKey(key tea.KeyMsg) tea.Cmd {
 	}
 	defer m.syncBreakFocus()
 	p := &m.bp
+	if p.onTabs && m.stepScreen(key.Type) {
+		return nil
+	}
+	target, nav := m.breakGrid().move(m.breakCell(), key.Type)
+	current := m.breakCell()
+	f := &p.form
+	if nav && m.brk == nil && !p.onTabs && f.row == breakRowDuration && (key.Type == tea.KeyLeft || key.Type == tea.KeyRight) {
+		f.custom.SetValue("") // elegir una duración descarta el valor escrito
+	}
+	if nav && m.brk == nil && !p.onTabs && f.row == breakRowCustom && (key.Type == tea.KeyLeft || key.Type == tea.KeyRight) {
+		if target == current || !inputAtEdge(f.custom, key.Type) {
+			var cmd tea.Cmd
+			f.custom, cmd = f.custom.Update(key)
+			return cmd
+		}
+	}
+	if nav {
+		m.goToBreak(target)
+		return nil
+	}
 	switch {
 	case p.onTabs:
-		if m.stepScreen(key.Type) {
-			return nil
-		}
-		if key.Type == tea.KeyDown || key.Type == tea.KeyTab {
-			p.onTabs = false
-		}
 	case m.brk != nil:
-		switch key.Type {
-		case tea.KeyUp, tea.KeyShiftTab:
-			p.onTabs = true
-		case tea.KeyLeft:
-			p.action = max(0, p.action-1)
-		case tea.KeyRight:
-			p.action = min(len(breakActionLabels)-1, p.action+1)
-		case tea.KeyEnter:
+		if key.Type == tea.KeyEnter {
 			m.activateBreakAction(p.action)
 		}
 	default:
@@ -220,27 +296,10 @@ func (m *Model) updateBreakKey(key tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-// updateBreakFormKey procesa las teclas del formulario de inicio.
+// updateBreakFormKey procesa Enter y el texto del campo «Otro» en el formulario de inicio.
 func (m *Model) updateBreakFormKey(key tea.KeyMsg) tea.Cmd {
 	f := &m.bp.form
 	switch key.Type {
-	case tea.KeyUp, tea.KeyShiftTab:
-		if f.row == 0 {
-			m.bp.onTabs = true
-		} else {
-			f.setRow(f.row - 1)
-		}
-	case tea.KeyDown, tea.KeyTab:
-		f.setRow(f.row + 1)
-	case tea.KeyLeft, tea.KeyRight:
-		if f.row == breakRowDuration {
-			step := 1
-			if key.Type == tea.KeyLeft {
-				step = -1
-			}
-			f.choice = min(max(f.choice+step, 0), len(breakDurations)-1)
-			f.custom.SetValue("")
-		}
 	case tea.KeyEnter:
 		m.activateBreakRow()
 	case tea.KeyRunes, tea.KeyBackspace, tea.KeyDelete:

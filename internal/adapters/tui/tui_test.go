@@ -20,9 +20,11 @@ type testStore struct {
 	edits    []editCall
 	deleted  []int64
 	restored []int64
-	editErr  error
-	totals   []tracking.ProjectTotal
-	counts   map[int64]int
+	// likes son los ids que se reanudaron con StartLike.
+	likes   []int64
+	editErr error
+	totals  []tracking.ProjectTotal
+	counts  map[int64]int
 	// breaks son los breaks de hoy que informa el fake.
 	breaks []tracking.Entry
 }
@@ -100,6 +102,16 @@ func (s *testStore) Restore(id int64) error {
 func (s *testStore) Start(input tracking.StartInput) (tracking.Entry, error) {
 	entry := tracking.Entry{ID: int64(len(s.started) + 1), Title: input.Title, Project: input.Project, Description: input.Description}
 	s.started = append(s.started, entry)
+	s.running = append(s.running, entry)
+	return entry, nil
+}
+func (s *testStore) StartLike(id int64) (tracking.Entry, error) {
+	src, err := s.Get(id)
+	if err != nil {
+		return tracking.Entry{}, err
+	}
+	s.likes = append(s.likes, id)
+	entry := tracking.Entry{ID: 100 + int64(len(s.likes)), Title: src.Title, Project: src.Project, Description: src.Description}
 	s.running = append(s.running, entry)
 	return entry, nil
 }

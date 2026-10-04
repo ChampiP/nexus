@@ -5,8 +5,8 @@ import "github.com/charmbracelet/lipgloss"
 // breakDurationX es el ancho de «▸ Duración  » antes de los botones de duración.
 const breakDurationX = 12
 
-// Líneas de contenido de la tarjeta del break activo: etiqueta, estado, horario, reanudación, línea en blanco y botones.
-const breakCardLines = 6
+// Líneas de contenido de la tarjeta del break activo: etiqueta, estado, barra, horario, reanudación, línea en blanco y botones.
+const breakCardLines = 7
 
 // breakLayout reúne las coordenadas de la pantalla de break; dibujo y ratón la comparten.
 type breakLayout struct {

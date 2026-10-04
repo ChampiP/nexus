@@ -70,12 +70,17 @@ func (m Model) View() string {
 		if project == "" {
 			project = "Sin proyecto"
 		}
+		focused := m.focus == focusRunningStart && m.focusedRunning == index
 		prefix := "  "
-		if m.focus == focusRunningStart && m.focusedRunning == index {
+		if focused {
 			prefix = "▸ "
 		}
-		text := fmt.Sprintf("%s%s  ·  %s  ·  %s", prefix, truncate(entry.Title, 24), truncate(project, 18), clock(m.now.Unix()-entry.StartedAt))
-		lines[row.row.y] = composeRow(text, 0, row.buttons, runningLabels, m.selectedButton(focusRunningStart, index))
+		spin := ""
+		if entry.Kind != tracking.KindBreak {
+			spin = m.spinnerFrame()
+		}
+		text := fmt.Sprintf("%s%s%s  ·  %s  ·  %s", prefix, spin, truncate(entry.Title, 24), truncate(project, 18), clock(m.now.Unix()-entry.StartedAt))
+		lines[row.row.y] = composeRow(text, 0, row.buttons, entryLabels(runningActions), m.selectedButton(focusRunningStart, index), focused)
 	}
 	if len(m.running) == 0 {
 		lines[layout.runningY+1] = label.Render("Aún no hay temporizadores activos")
@@ -93,7 +98,14 @@ func (m Model) View() string {
 	if m.focus == focusWeek {
 		week = "▸ " + week
 	}
-	lines[layout.tabsY] = titleStyle.Render(today) + "    " + titleStyle.Render(week)
+	todayStyle, weekStyle := titleStyle, titleStyle
+	if m.focus == focusToday {
+		todayStyle = focusButton
+	}
+	if m.focus == focusWeek {
+		weekStyle = focusButton
+	}
+	lines[layout.tabsY] = todayStyle.Render(today) + "    " + weekStyle.Render(week)
 	dashboard := m.dashboardPanel(layout)
 	for i, line := range strings.Split(dashboard, "\n") {
 		y := layout.dashboardY + i
@@ -120,12 +132,18 @@ func startLine(focused bool) string {
 	if focused {
 		mark = "▸ "
 	}
+	if focused {
+		return titleStyle.Render("▸ ") + focusButton.Render("[ Iniciar ]")
+	}
 	return lipgloss.NewStyle().Foreground(accent).Bold(true).Render(mark + "[ Iniciar ]")
 }
 
 // headerBase es la línea del encabezado sin el indicador de break: título, pestañas y resumen de hoy.
 func (m Model) headerBase(tabs bool) string {
 	stats := label.Render(fmt.Sprintf("  ·  Hoy %s  ·  %s", formatDuration(m.todaySeconds), m.now.Format("02/01/2006")))
+	if m.animating() {
+		stats = label.Render("  ·  ") + m.spin.View() + label.Render(fmt.Sprintf("Hoy %s  ·  %s", formatDuration(m.todaySeconds), m.now.Format("02/01/2006")))
+	}
 	if tabs {
 		return titleStyle.Render("NEXUS") + "  " + renderTabs(m.screens(), screenTimers, m.focus == focusTabs) + stats
 	}
@@ -154,11 +172,11 @@ func (m Model) hint() string {
 	case focusStart:
 		return "Enter iniciar · ↑↓ mover · clic para iniciar"
 	case focusToday, focusWeek:
-		return "←→ o Enter cambiar período · ↑↓ mover · Ctrl+C salir"
+		return "←→ cambiar período · ↑↓ mover · PgUp/PgDn sección · Ctrl+C salir"
 	case focusUndo:
 		return "Enter deshacer · ↑↓ mover · Ctrl+Z deshacer"
 	default:
-		return "←→ elegir acción · Enter ejecutar · ↑↓ mover · Ctrl+Z deshacer"
+		return "←→ elegir acción · Enter ejecutar · ↑↓ mover · PgUp/PgDn sección · Ctrl+Z deshacer"
 	}
 }
 
@@ -211,12 +229,13 @@ func (m Model) dashboardPanel(layout screenLayout) string {
 		if entry.EndedAt != nil {
 			seconds = *entry.EndedAt - entry.StartedAt
 		}
+		focused := m.focus == focusRecent && m.focusedRecent == i
 		prefix := "  "
-		if m.focus == focusRecent && m.focusedRecent == i {
+		if focused {
 			prefix = "▸ "
 		}
 		text := fmt.Sprintf("%s%-22s %-14s %s", prefix, truncate(entry.Title, 22), truncate(project, 14), formatDuration(seconds))
-		lines = append(lines, composeRow(text, recentContentX, zone.buttons, recentLabels, m.selectedButton(focusRecent, i)))
+		lines = append(lines, composeRow(text, recentContentX, zone.buttons, entryLabels(recentActions(entry)), m.selectedButton(focusRecent, i), focused))
 	}
 	return panel.Width(max(30, m.width-2)).Render(strings.Join(lines, "\n"))
 }

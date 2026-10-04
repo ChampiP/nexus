@@ -13,6 +13,7 @@ import (
 // Tracker describes the use cases required by the command line.
 type Tracker interface {
 	Start(tracking.StartInput) (tracking.Entry, error)
+	StartLike(int64) (tracking.Entry, error)
 	Stop(int64) error
 	StopLatest() error
 	StopAll() (int, error)
@@ -100,6 +101,8 @@ func run(args []string, tracker Tracker, opts Options, stdout, stderr io.Writer)
 	switch command {
 	case "start":
 		return runStart(args, tracker, stdout)
+	case "resume":
+		return runResume(args, tracker, stdout)
 	case "stop":
 		return runStop(args, tracker, stdout)
 	case "ls":
@@ -130,6 +133,7 @@ Sin comando se abre la interfaz interactiva.
 Temporizadores:
   nexus start <título> [-p proyecto] [-d descripción] [--json]   inicia un temporizador
   nexus stop [id] [--all] [--json]                               detiene uno o todos
+  nexus resume <id> [--json]                                     inicia una copia de una tarea
   nexus status [--json]                                          muestra lo que está en curso
   nexus ls [--json]                                              lista en curso y recientes
   nexus report [--week]                                          tiempo por proyecto

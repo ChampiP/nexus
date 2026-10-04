@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"nexus/internal/catalog"
@@ -63,11 +64,13 @@ type Model struct {
 	brk             *countdown.Break
 	bp              breakPage
 	wasOverdue      bool
+	spin            spinner.Model
+	fastActive      bool // hay un tick rápido en vuelo
 }
 
 // NewModel creates a ready-to-type model backed by the application tracker.
 func NewModel(tracker Tracker, options ...Option) Model {
-	m := Model{tracker: tracker, now: time.Now()}
+	m := Model{tracker: tracker, now: time.Now(), spin: newSpinner()}
 	for _, option := range options {
 		option(&m)
 	}
@@ -81,6 +84,7 @@ func NewModel(tracker Tracker, options ...Option) Model {
 		// Con el break vencido se abre directo en la pantalla de break, con el foco en [Volver al trabajo].
 		m.openBreakPage()
 	}
+	m.fastActive = m.animating()
 	return m
 }
 
@@ -95,7 +99,12 @@ func workEntries(entries []tracking.Entry) []tracking.Entry {
 	return work
 }
 
-func (m Model) Init() tea.Cmd { return tick() }
+func (m Model) Init() tea.Cmd {
+	if m.fastActive {
+		return tea.Batch(tick(), fastTick())
+	}
+	return tick()
+}
 
 func (m *Model) refresh() {
 	m.now = time.Now()
@@ -112,8 +121,15 @@ func (m *Model) refresh() {
 	m.clampFocus()
 }
 
-func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
+func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
+	case fastTickMsg:
+		if !m.animating() {
+			m.fastActive = false
+			return m, nil
+		}
+		m.advanceSpinner()
+		return m, fastTick()
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
@@ -172,10 +188,6 @@ func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
 	if m.focus == focusTabs && m.stepScreen(key.Type) {
 		return nil
 	}
-	if m.edit != nil && m.focus >= focusEditSave {
-		m.updateEditButtons(key)
-		return nil
-	}
 	if m.focus == focusProject && !m.pickerOpen {
 		switch key.Type {
 		case tea.KeyLeft:
@@ -199,41 +211,25 @@ func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 	}
-	if key.Type == tea.KeyTab || key.Type == tea.KeyShiftTab {
-		step := 1
-		if key.Type == tea.KeyShiftTab {
-			step = -1
-		}
-		m.moveFocus(step)
+	if m.navigate(key) {
 		return nil
 	}
 	if m.focus == focusToday || m.focus == focusWeek {
-		switch key.Type {
-		case tea.KeyLeft, tea.KeyRight, tea.KeyEnter:
-			m.week = !m.week
-			m.refresh()
-			return nil
-		case tea.KeyUp:
-			m.moveFocus(-1)
-			return nil
-		case tea.KeyDown:
-			m.moveFocus(1)
-			return nil
-		}
+		// La opción enfocada ya es la elegida; Enter no cambia nada.
+		return nil
 	}
-	if (m.focus == focusRunningStart || m.focus == focusRecent) && m.updateRowKey(key) {
+	if (m.focus == focusRunningStart || m.focus == focusRecent) && key.Type == tea.KeyEnter {
+		m.activateRowButton()
+		return nil
+	}
+	if m.edit != nil && m.focus >= focusEditSave {
+		if key.Type == tea.KeyEnter {
+			m.activateEditButton(m.focus)
+		}
 		return nil
 	}
 	if m.focus == focusUndo && key.Type == tea.KeyEnter {
 		m.restoreLast()
-		return nil
-	}
-	if key.Type == tea.KeyUp {
-		m.moveFocus(-1)
-		return nil
-	}
-	if key.Type == tea.KeyDown {
-		m.moveFocus(1)
 		return nil
 	}
 	if key.Type == tea.KeyEnter {
@@ -247,7 +243,7 @@ func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
 				return nil
 			}
 			if strings.TrimSpace(m.inputs[0].Value()) == "" {
-				m.moveFocus(1)
+				m.goTo(m.timersGrid().vertical(m.currentCell(), 1))
 			} else {
 				m.startTimer()
 			}
@@ -273,6 +269,27 @@ func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
 		return cmd
 	}
 	return nil
+}
+
+// navigate aplica las teclas de navegación del modelo único; devuelve true si la tecla se consumió.
+// En un campo de texto ←/→ siguen moviendo el cursor salvo que esté vacío o en el borde y haya vecino.
+func (m *Model) navigate(key tea.KeyMsg) bool {
+	if m.pickerOpen && m.focus == focusProject && key.Type != tea.KeyTab && key.Type != tea.KeyShiftTab {
+		return false
+	}
+	grid := m.timersGrid()
+	current := m.currentCell()
+	target, ok := grid.move(current, key.Type)
+	if !ok {
+		return false
+	}
+	if index := m.inputIndex(); index >= 0 && (key.Type == tea.KeyLeft || key.Type == tea.KeyRight) {
+		if target == current || !inputAtEdge(m.inputs[index], key.Type) {
+			return false
+		}
+	}
+	m.goTo(target)
+	return true
 }
 
 func (m *Model) stopFocused() {

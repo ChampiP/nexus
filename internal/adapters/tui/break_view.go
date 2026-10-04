@@ -52,6 +52,7 @@ func (m Model) activeCard() []string {
 	return []string{
 		titleStyle.Render("☕ " + b.Label),
 		lipgloss.NewStyle().Bold(true).Foreground(color).Render(status),
+		m.breakBar(),
 		fmt.Sprintf("De %s a %s", clockTime(b.StartedAt), clockTime(b.EndsAt)),
 		label.Render(resume),
 		"",

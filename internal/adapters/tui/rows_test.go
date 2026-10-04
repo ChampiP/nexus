@@ -50,7 +50,7 @@ func goTo(t *testing.T, m Model, target focusTarget, row int) Model {
 
 func TestFocusRingReachesRecentRows(t *testing.T) {
 	m := newRowsModel(newRowsStore())
-	want := []focusTarget{focusProject, focusDescription, focusStart, focusRunningStart, focusToday, focusWeek, focusRecent, focusRecent}
+	want := []focusTarget{focusProject, focusDescription, focusStart, focusRunningStart, focusToday, focusRecent, focusRecent}
 	for i, target := range want {
 		m = press(t, m, tea.KeyDown)
 		if m.focus != target {
@@ -89,7 +89,7 @@ func TestEnterOnEditOpensPrefilledPanel(t *testing.T) {
 	db := newRowsStore()
 	db.recent[0].Description = "detalle"
 	m := goTo(t, newRowsModel(db), focusRecent, 0)
-	m = press(t, m, tea.KeyEnter)
+	m = press(t, m, tea.KeyRight, tea.KeyEnter)
 	view := m.View()
 	for _, text := range []string{"Editar tarea #2", "[Guardar]", "[Eliminar]", "[Cancelar]"} {
 		if !strings.Contains(view, text) {
@@ -107,7 +107,7 @@ func TestEnterOnEditOpensPrefilledPanel(t *testing.T) {
 func TestSaveSendsOnlyChangedFields(t *testing.T) {
 	db := newRowsStore()
 	m := goTo(t, newRowsModel(db), focusRecent, 0)
-	m = press(t, m, tea.KeyEnter)
+	m = press(t, m, tea.KeyRight, tea.KeyEnter)
 	m.inputs[0].SetValue("Nueva")
 	m = press(t, m, tea.KeyEnter)
 	if len(db.edits) != 1 {
@@ -125,7 +125,7 @@ func TestSaveSendsOnlyChangedFields(t *testing.T) {
 func TestSaveSendsChangedProjectAndDescription(t *testing.T) {
 	db := newRowsStore()
 	m := goTo(t, newRowsModel(db), focusRecent, 0)
-	m = press(t, m, tea.KeyEnter, tea.KeyDown, tea.KeyRight) // proyecto: tbwa → "Sin proyecto"
+	m = press(t, m, tea.KeyRight, tea.KeyEnter, tea.KeyDown, tea.KeyRight) // proyecto: tbwa → "Sin proyecto"
 	m = press(t, m, tea.KeyDown)
 	m.inputs[2].SetValue("nota")
 	m = press(t, m, tea.KeyEnter)
@@ -138,7 +138,7 @@ func TestSaveSendsChangedProjectAndDescription(t *testing.T) {
 func TestEscCancelsEditWithoutCallingEdit(t *testing.T) {
 	db := newRowsStore()
 	m := goTo(t, newRowsModel(db), focusRecent, 0)
-	m = press(t, m, tea.KeyEnter)
+	m = press(t, m, tea.KeyRight, tea.KeyEnter)
 	m.inputs[0].SetValue("Cambiado")
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	m = next.(Model)
@@ -152,7 +152,7 @@ func TestEscCancelsEditWithoutCallingEdit(t *testing.T) {
 
 func TestEscClosesPickerBeforeEditPanel(t *testing.T) {
 	m := goTo(t, newRowsModel(newRowsStore()), focusRecent, 0)
-	m = press(t, m, tea.KeyEnter, tea.KeyDown, tea.KeyEnter)
+	m = press(t, m, tea.KeyRight, tea.KeyEnter, tea.KeyDown, tea.KeyEnter)
 	if !m.pickerOpen {
 		t.Fatal("Enter en Proyecto debe abrir la lista")
 	}
@@ -166,7 +166,7 @@ func TestEditErrorsAreShownInSpanish(t *testing.T) {
 	db := newRowsStore()
 	db.editErr = tracking.ErrEmptyTitle
 	m := goTo(t, newRowsModel(db), focusRecent, 0)
-	m = press(t, m, tea.KeyEnter)
+	m = press(t, m, tea.KeyRight, tea.KeyEnter)
 	m.inputs[0].SetValue("x")
 	m = press(t, m, tea.KeyEnter)
 	if m.message != "El título no puede estar vacío" || !strings.Contains(m.View(), "Editar tarea") {
@@ -182,7 +182,7 @@ func TestEditErrorsAreShownInSpanish(t *testing.T) {
 func TestDeleteRequiresConfirmationAndDefaultsToCancel(t *testing.T) {
 	db := newRowsStore()
 	m := goTo(t, newRowsModel(db), focusRecent, 0)
-	m = press(t, m, tea.KeyRight, tea.KeyEnter)
+	m = press(t, m, tea.KeyRight, tea.KeyRight, tea.KeyEnter)
 	view := m.View()
 	if !strings.Contains(view, "¿Eliminar «Vieja A»? Quedará en la papelera.") || !strings.Contains(view, "[Eliminar]") || !strings.Contains(view, "[Cancelar]") {
 		t.Fatalf("falta la confirmación:\n%s", view)
@@ -205,7 +205,7 @@ func TestDeleteRequiresConfirmationAndDefaultsToCancel(t *testing.T) {
 func TestConfirmDeletesThenUndoByButtonAndCtrlZ(t *testing.T) {
 	db := newRowsStore()
 	m := goTo(t, newRowsModel(db), focusRecent, 0)
-	m = press(t, m, tea.KeyRight, tea.KeyEnter, tea.KeyLeft, tea.KeyEnter)
+	m = press(t, m, tea.KeyRight, tea.KeyRight, tea.KeyEnter, tea.KeyLeft, tea.KeyEnter)
 	if len(db.deleted) != 1 || db.deleted[0] != 2 {
 		t.Fatalf("eliminadas = %v", db.deleted)
 	}
@@ -219,7 +219,7 @@ func TestConfirmDeletesThenUndoByButtonAndCtrlZ(t *testing.T) {
 	}
 	// Ctrl+Z restaura la última eliminada durante la sesión.
 	m = goTo(t, m, focusRecent, 0)
-	m = press(t, m, tea.KeyRight, tea.KeyEnter, tea.KeyLeft, tea.KeyEnter)
+	m = press(t, m, tea.KeyRight, tea.KeyRight, tea.KeyEnter, tea.KeyLeft, tea.KeyEnter)
 	if len(db.deleted) != 2 {
 		t.Fatalf("eliminadas = %v", db.deleted)
 	}
@@ -232,7 +232,7 @@ func TestConfirmDeletesThenUndoByButtonAndCtrlZ(t *testing.T) {
 func TestUndoButtonExpiresButCtrlZStillWorks(t *testing.T) {
 	db := newRowsStore()
 	m := goTo(t, newRowsModel(db), focusRecent, 0)
-	m = press(t, m, tea.KeyRight, tea.KeyEnter, tea.KeyLeft, tea.KeyEnter)
+	m = press(t, m, tea.KeyRight, tea.KeyRight, tea.KeyEnter, tea.KeyLeft, tea.KeyEnter)
 	m.undoUntil = m.now.Add(-1)
 	m.refresh()
 	if strings.Contains(m.View(), "[Deshacer]") {
@@ -261,8 +261,8 @@ func TestEditRunningEntryKeepsItRunning(t *testing.T) {
 func TestEditPanelDeleteButtonConfirmsAndCloses(t *testing.T) {
 	db := newRowsStore()
 	m := goTo(t, newRowsModel(db), focusRecent, 1)
-	m = press(t, m, tea.KeyEnter)
-	m = press(t, m, tea.KeyDown, tea.KeyDown, tea.KeyDown, tea.KeyDown) // proyecto, descripción, Guardar, Eliminar
+	m = press(t, m, tea.KeyRight, tea.KeyEnter)
+	m = press(t, m, tea.KeyDown, tea.KeyDown, tea.KeyDown, tea.KeyRight) // proyecto, descripción, Guardar, → Eliminar
 	if m.focus != focusEditDelete {
 		t.Fatalf("foco = %v, quería el botón Eliminar", m.focus)
 	}
@@ -291,7 +291,7 @@ func TestClickHitTestsRowButtons(t *testing.T) {
 	if m.focus != focusRecent || m.focusedRecent != 0 {
 		t.Fatalf("clic en la fila debe enfocarla, foco=%v", m.focus)
 	}
-	m = click(m, layout.recent[1].buttons[1])
+	m = click(m, layout.recent[1].buttons[2])
 	if m.confirm == nil || m.confirm.entry.ID != 3 || len(db.deleted) != 0 {
 		t.Fatal("clic en ✕ Eliminar abre la confirmación sin borrar")
 	}
@@ -326,12 +326,12 @@ func TestClickConfirmCancelAndEditPanelFields(t *testing.T) {
 	click := func(m Model, z rect) Model {
 		return updateMouse(t, m, tea.MouseMsg{X: z.x, Y: z.y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	}
-	m = click(m, m.computeLayout().recent[0].buttons[1])
+	m = click(m, m.computeLayout().recent[0].buttons[2])
 	m = click(m, m.computeLayout().statusButtons[1]) // [Cancelar]
 	if m.confirm != nil || len(db.deleted) != 0 {
 		t.Fatal("Cancelar cierra sin borrar")
 	}
-	m = click(m, m.computeLayout().recent[0].buttons[0])
+	m = click(m, m.computeLayout().recent[0].buttons[1])
 	m = click(m, m.computeLayout().fields[2])
 	if m.focus != focusDescription {
 		t.Fatalf("clic en Descripción, foco=%v", m.focus)
@@ -347,7 +347,7 @@ func TestLayoutMatchesRenderedLines(t *testing.T) {
 	m.totals = []tracking.ProjectTotal{{Project: "nexus", Seconds: 60}}
 	m = press(t, m, tea.KeyDown) // fuerza recálculo estable
 	m = goTo(t, m, focusRecent, 0)
-	m = press(t, m, tea.KeyRight, tea.KeyEnter)
+	m = press(t, m, tea.KeyRight, tea.KeyRight, tea.KeyEnter)
 	layout := m.computeLayout()
 	lines := strings.Split(m.View(), "\n")
 	check := func(y int, z rect, text string) {
@@ -361,6 +361,6 @@ func TestLayoutMatchesRenderedLines(t *testing.T) {
 		}
 	}
 	check(layout.running[0].row.y, layout.running[0].buttons[0], "[✎ Editar]")
-	check(layout.recent[1].row.y, layout.recent[1].buttons[1], "[✕ Eliminar]")
+	check(layout.recent[1].row.y, layout.recent[1].buttons[2], "[✕ Eliminar]")
 	check(layout.statusY, layout.statusButtons[0], "[Eliminar]")
 }

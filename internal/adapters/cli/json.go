@@ -30,6 +30,10 @@ type createdEntry struct {
 	Description string `json:"description"`
 	StartedAt   int64  `json:"started_at"`
 }
+type resumedOutput struct {
+	createdEntry
+	CopyOf int64 `json:"copy_of"`
+}
 type stoppedOutput struct {
 	Stopped int `json:"stopped"`
 }

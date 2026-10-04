@@ -11,6 +11,7 @@ import (
 // Tracker is the narrow application boundary required by the terminal interface.
 type Tracker interface {
 	Start(tracking.StartInput) (tracking.Entry, error)
+	StartLike(int64) (tracking.Entry, error)
 	Stop(int64) error
 	Edit(int64, tracking.EditInput) (tracking.Entry, error)
 	Delete(int64) error

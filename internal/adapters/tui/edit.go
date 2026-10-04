@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"nexus/internal/tracking"
 )
 
@@ -81,22 +80,6 @@ func (m *Model) saveEdit() {
 	m.closeEdit()
 	m.refresh()
 	m.setMessage("Guardado: " + updated.Title)
-}
-
-// updateEditButtons procesa las teclas cuando el foco está en [Guardar] [Eliminar] [Cancelar].
-func (m *Model) updateEditButtons(key tea.KeyMsg) {
-	switch key.Type {
-	case tea.KeyLeft:
-		m.focus = max(focusEditSave, m.focus-1)
-	case tea.KeyRight:
-		m.focus = min(focusEditCancel, m.focus+1)
-	case tea.KeyUp, tea.KeyShiftTab:
-		m.moveFocus(-1)
-	case tea.KeyDown, tea.KeyTab:
-		m.moveFocus(1)
-	case tea.KeyEnter:
-		m.activateEditButton(m.focus)
-	}
 }
 
 func (m *Model) activateEditButton(button focusTarget) {

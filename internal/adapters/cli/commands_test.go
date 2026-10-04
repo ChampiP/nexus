@@ -367,3 +367,36 @@ func TestProjectsMergesCatalogAndKeepsJSONContract(t *testing.T) {
 		}
 	}
 }
+
+func TestResumeCopiesStoppedTask(t *testing.T) {
+	a := newApp(t)
+	a.mustRun(t, "start", "Informe", "-p", "Trabajo", "-d", "nota")
+	a.mustRun(t, "stop", "1")
+	wantOut(t, a.mustRun(t, "resume", "1"), "reanudado #2 Informe (copia de #1)\n")
+	var created map[string]any
+	if err := json.Unmarshal([]byte(a.mustRun(t, "resume", "1", "--json")), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created["id"] != float64(3) || created["title"] != "Informe" || created["project"] != "Trabajo" || created["description"] != "nota" || created["copy_of"] != float64(1) {
+		t.Fatalf("resume JSON = %#v", created)
+	}
+}
+
+func TestResumeErrorsAreSpanish(t *testing.T) {
+	a := newApp(t)
+	_, err := a.run(t, "resume", "99")
+	wantErr(t, err, "la tarea no existe")
+	_, err = a.run(t, "resume")
+	wantErr(t, err, "uso: nexus resume <id> [--json]")
+	_, err = a.run(t, "resume", "abc")
+	wantErr(t, err, "id inválido «abc»")
+	out, err := a.run(t, "resume", "99", "--json")
+	wantErr(t, err, "la tarea no existe")
+	wantOut(t, out, "{\"error\":\"la tarea no existe\"}\n")
+}
+
+func TestUsageMentionsResume(t *testing.T) {
+	if !strings.Contains(usageText, "nexus resume <id> [--json]") {
+		t.Fatal("el uso debe documentar resume")
+	}
+}
