@@ -408,15 +408,23 @@ func (m *Model) rebuildCatalogRows() {
 		r := c.rows[c.row]
 		focused = &r
 	}
-	week := map[string]int64{}
+	weekByID := map[int64]int64{}
+	weekByName := map[string]int64{}
 	if totals, err := m.tracker.Report(rangeStart(m.now, true)); err == nil {
 		for _, t := range totals {
-			week[strings.ToLower(t.Project)] = t.Seconds
+			if t.ProjectID > 0 {
+				weekByID[t.ProjectID] = t.Seconds
+			} else {
+				weekByName[strings.ToLower(t.Project)] = t.Seconds
+			}
 		}
 	}
 	stats := func(p catalog.Project) (int64, int) {
 		tasks, _ := m.tracker.CountByProject(p.ID)
-		return week[strings.ToLower(p.Name)], tasks
+		if s, ok := weekByID[p.ID]; ok {
+			return s, tasks
+		}
+		return weekByName[strings.ToLower(p.Name)], tasks
 	}
 	c.rows = buildCatalogRows(m.tree, c.showArchived, stats)
 	if focused != nil {
@@ -688,7 +696,7 @@ func (m *Model) submitCatalogInput() {
 			err = m.catalog.RenameClient(in.row.id, name)
 		default:
 			err = m.catalog.RenameProject(in.row.id, name)
-			if err == nil && strings.EqualFold(m.selectedProject, in.row.name) {
+			if err == nil && (m.selectedProjectID == in.row.id || (m.selectedProjectID == 0 && strings.EqualFold(m.selectedProject, in.row.name))) {
 				m.selectedProject = name
 				m.inputs[1].SetValue(name)
 			}

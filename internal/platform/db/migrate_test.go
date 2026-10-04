@@ -62,7 +62,7 @@ func TestMigrateFreshAppliesAllWithoutBackupAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	migrations := []Migration{{"a", 1, createTable("t1")}, {"b", 1, createTable("t2")}, {"a", 2, createTable("t3")}}
+	migrations := []Migration{{Module: "a", Version: 1, Up: createTable("t1")}, {Module: "b", Version: 1, Up: createTable("t2")}, {Module: "a", Version: 2, Up: createTable("t3")}}
 	applied, backup, err := Migrate(db, path, migrations, fixedNow)
 	if err != nil || applied != 3 || backup != "" {
 		t.Fatalf("Migrate = %d, %q, %v", applied, backup, err)
@@ -81,7 +81,7 @@ func TestMigrateBacksUpExistingDatabaseOnce(t *testing.T) {
 	}
 	defer db.Close()
 	exec(t, db, `CREATE TABLE legacy (id INTEGER); INSERT INTO legacy VALUES (42)`)
-	applied, backup, err := Migrate(db, path, []Migration{{"a", 1, createTable("t1")}}, fixedNow)
+	applied, backup, err := Migrate(db, path, []Migration{{Module: "a", Version: 1, Up: createTable("t1")}}, fixedNow)
 	if err != nil || applied != 1 {
 		t.Fatalf("Migrate = %d, %q, %v", applied, backup, err)
 	}
@@ -116,14 +116,14 @@ func TestMigrateFailureRollsBackAndStops(t *testing.T) {
 	defer db.Close()
 	boom := errors.New("boom")
 	migrations := []Migration{
-		{"a", 1, createTable("t1")},
-		{"a", 2, func(tx *sql.Tx) error {
+		{Module: "a", Version: 1, Up: createTable("t1")},
+		{Module: "a", Version: 2, Up: func(tx *sql.Tx) error {
 			if _, err := tx.Exec(`CREATE TABLE t2 (id INTEGER)`); err != nil {
 				return err
 			}
 			return boom
 		}},
-		{"a", 3, createTable("t3")},
+		{Module: "a", Version: 3, Up: createTable("t3")},
 	}
 	applied, _, err := Migrate(db, path, migrations, fixedNow)
 	if !errors.Is(err, boom) || applied != 1 {
@@ -165,7 +165,7 @@ func TestMigrateConcurrentLegacyDatabaseBacksUpOnce(t *testing.T) {
 			}
 			defer db.Close()
 			<-start
-			_, _, err = Migrate(db, path, []Migration{{"a", 1, createTable("migrated")}}, fixedNow)
+			_, _, err = Migrate(db, path, []Migration{{Module: "a", Version: 1, Up: createTable("migrated")}}, fixedNow)
 			if err != nil {
 				errs <- err
 			}
@@ -200,12 +200,103 @@ func TestMigrateRejectsNonIncreasingVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	_, _, err = Migrate(db, path, []Migration{{"a", 2, createTable("t1")}, {"a", 1, createTable("t2")}}, fixedNow)
+	_, _, err = Migrate(db, path, []Migration{{Module: "a", Version: 2, Up: createTable("t1")}, {Module: "a", Version: 1, Up: createTable("t2")}}, fixedNow)
 	if err == nil {
 		t.Fatal("expected error")
 	}
 	var n int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE name = 't1'`).Scan(&n); err != nil || n != 0 {
 		t.Fatalf("nothing may run on invalid input: %d, %v", n, err)
+	}
+}
+
+func TestMigrateDisableForeignKeysRestoresPragmaEvenOnFailure(t *testing.T) {
+	// Comprueba que las migraciones con DisableForeignKeys mantienen foreign_keys=ON después de ejecutarse,
+	// incluso tras un paso que falle o provoque una infracción.
+	path := filepath.Join(t.TempDir(), "n.db")
+	db, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	getFK := func() int {
+		var fk int
+		if err := db.QueryRow(`PRAGMA foreign_keys`).Scan(&fk); err != nil {
+			t.Fatal(err)
+		}
+		return fk
+	}
+
+	if fk := getFK(); fk != 1 {
+		t.Fatalf("foreign_keys inicial = %d, want 1", fk)
+	}
+
+	// Caso exitoso con DisableForeignKeys: true
+	var fkInsideTx int
+	migrations := []Migration{
+		{
+			Module:             "test",
+			Version:            1,
+			DisableForeignKeys: true,
+			Up: func(tx *sql.Tx) error {
+				if err := tx.QueryRow(`PRAGMA foreign_keys`).Scan(&fkInsideTx); err != nil {
+					return err
+				}
+				_, err := tx.Exec(`CREATE TABLE parent (id INTEGER PRIMARY KEY); CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id));`)
+				return err
+			},
+		},
+	}
+	applied, _, err := Migrate(db, path, migrations, fixedNow)
+	if err != nil || applied != 1 {
+		t.Fatalf("Migrate exitoso = %d, %v", applied, err)
+	}
+	if fkInsideTx != 0 {
+		t.Fatalf("foreign_keys dentro de tx = %d, want 0", fkInsideTx)
+	}
+	if fk := getFK(); fk != 1 {
+		t.Fatalf("foreign_keys tras éxito = %d, want 1", fk)
+	}
+
+	// Caso fallido por error en Up
+	boom := errors.New("boom")
+	failMigrations := []Migration{
+		{
+			Module:             "test",
+			Version:            2,
+			DisableForeignKeys: true,
+			Up: func(tx *sql.Tx) error {
+				return boom
+			},
+		},
+	}
+	_, _, err = Migrate(db, path, failMigrations, fixedNow)
+	if !errors.Is(err, boom) {
+		t.Fatalf("Migrate con error esperado, obtuvo %v", err)
+	}
+	if fk := getFK(); fk != 1 {
+		t.Fatalf("foreign_keys tras fallo en Up = %d, want 1", fk)
+	}
+
+	// Caso fallido por infracción en foreign_key_check
+	fkViolationMigrations := []Migration{
+		{
+			Module:             "test",
+			Version:            2,
+			DisableForeignKeys: true,
+			Up: func(tx *sql.Tx) error {
+				// Inserta una fila con clave foránea rota
+				_, err := tx.Exec(`INSERT INTO child(id, parent_id) VALUES (1, 999)`)
+				return err
+			},
+		},
+	}
+	_, _, err = Migrate(db, path, fkViolationMigrations, fixedNow)
+	if err == nil {
+		t.Fatal("se esperaba error por infracción de clave foránea")
+	}
+	if fk := getFK(); fk != 1 {
+		t.Fatalf("foreign_keys tras infracción FK = %d, want 1", fk)
 	}
 }

@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -27,12 +28,24 @@ type testProjects struct{ repo *catalog.SQLite }
 
 func (p testProjects) EnsureProject(name string) (int64, error) {
 	project, err := p.repo.EnsureProject(name)
+	if errors.Is(err, catalog.ErrAmbiguousProject) {
+		return 0, errors.Join(tracking.ErrAmbiguousProject, catalog.ErrAmbiguousProject)
+	}
 	return project.ID, err
+}
+
+func (p testProjects) ProjectName(id int64) (string, error) {
+	proj, err := p.repo.Project(id)
+	if err != nil {
+		return "", err
+	}
+	return proj.Name, nil
 }
 
 type app struct {
 	tracker *tracking.Tracker
 	catalog *catalog.Service
+	now     *time.Time
 }
 
 func newApp(t *testing.T) app {
@@ -49,16 +62,21 @@ func newApp(t *testing.T) app {
 	if _, _, err := platformdb.Migrate(db, path, migrations, time.Now); err != nil {
 		t.Fatal(err)
 	}
-	now := func() time.Time { return time.Date(2025, 3, 4, 12, 0, 0, 0, time.Local) }
+	current := time.Date(2025, 3, 4, 12, 0, 0, 0, time.Local)
+	now := func() time.Time { return current }
 	repo := catalog.NewSQLite(db)
 	tracker := tracking.NewTracker(tracking.NewSQLite(db), now, tracking.WithProjects(testProjects{repo}))
-	return app{tracker, catalog.NewService(repo, testEntries{tracker}, now)}
+	return app{tracker, catalog.NewService(repo, testEntries{tracker}, now), &current}
 }
 
 func (a app) run(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 	var out, stderr bytes.Buffer
-	err := RunWithCatalog(args, a.tracker, a.catalog, &out, &stderr)
+	clk := time.Now
+	if a.now != nil {
+		clk = func() time.Time { return *a.now }
+	}
+	err := RunWithOptions(args, a.tracker, Options{Catalog: a.catalog, Now: clk}, &out, &stderr)
 	return out.String(), err
 }
 
@@ -187,7 +205,7 @@ func TestProjectCommands(t *testing.T) {
 	if project["name"] != "Sitio" || project["archived"] != true || project["client_id"] != float64(1) {
 		t.Fatalf("project JSON = %#v", project)
 	}
-	a.mustRun(t, "project", "add", "App")
+	a.mustRun(t, "project", "add", "App", "-c", "Globex")
 	_, err := a.run(t, "project", "rename", "App", "sitio")
 	wantErr(t, err, "ya existe un proyecto con ese nombre; usa «nexus project merge» para unirlos")
 	_, err = a.run(t, "project", "merge", "App", "app", "--yes")
@@ -196,15 +214,15 @@ func TestProjectCommands(t *testing.T) {
 
 func TestReferenceNameWinsOverID(t *testing.T) {
 	a := newApp(t)
-	a.mustRun(t, "project", "add", "uno")  // id 1
-	a.mustRun(t, "project", "add", "2")    // id 2, nombre numérico
-	a.mustRun(t, "project", "add", "tres") // id 3
-	a.mustRun(t, "project", "rename", "2", "dos")
+	a.mustRun(t, "client", "add", "uno")  // id 1
+	a.mustRun(t, "client", "add", "2")    // id 2, nombre numérico
+	a.mustRun(t, "client", "add", "tres") // id 3
+	a.mustRun(t, "client", "rename", "2", "dos")
 	// "2" ya no es un nombre: se resuelve por id.
-	wantOut(t, a.mustRun(t, "project", "archive", "2"), "proyecto archivado #2 dos\n")
-	a.mustRun(t, "project", "rename", "3", "1") // el proyecto #3 se llama "1"
-	// "1" coincide con el nombre del proyecto #3, que gana sobre el id 1.
-	wantOut(t, a.mustRun(t, "project", "archive", "1"), "proyecto archivado #3 1\n")
+	wantOut(t, a.mustRun(t, "client", "rename", "2", "dos-nuevo"), "cliente renombrado #2 dos-nuevo\n")
+	a.mustRun(t, "client", "rename", "3", "1") // el cliente #3 se llama "1"
+	// "1" coincide con el nombre del cliente #3, que gana sobre el id 1.
+	wantOut(t, a.mustRun(t, "client", "rename", "1", "uno-nuevo"), "cliente renombrado #3 uno-nuevo\n")
 }
 
 func TestDestructiveCommandsRequireYes(t *testing.T) {
@@ -340,11 +358,14 @@ func TestProjectsMergesCatalogAndKeepsJSONContract(t *testing.T) {
 	a.mustRun(t, "project", "archive", "Viejo")
 	a.mustRun(t, "start", "Informe", "-p", "Depiloto")
 	a.mustRun(t, "start", "Suelta", "-p", "Texto libre")
-	wantOut(t, a.mustRun(t, "projects"), "Depiloto\nTexto libre\nLumirecon\n")
-	wantOut(t, a.mustRun(t, "projects", "-q", "depilab"), "Depiloto\nLumirecon\n")
+	wantOut(t, a.mustRun(t, "projects"), "Depilab/Depiloto\nTexto libre\nDepilab/Lumirecon\n")
+	wantOut(t, a.mustRun(t, "projects", "-q", "depilab"), "Depilab/Depiloto\nDepilab/Lumirecon\n")
 	var projects []map[string]any
 	if err := json.Unmarshal([]byte(a.mustRun(t, "projects", "--json")), &projects); err != nil || len(projects) != 3 {
 		t.Fatalf("projects JSON: %v %v", projects, err)
+	}
+	if _, ok := projects[0]["id"]; !ok {
+		t.Fatalf("falta id en projects JSON: %#v", projects[0])
 	}
 	first := projects[0]
 	if first["name"] != "Depiloto" || first["client"] != "Depilab" || first["organization"] != "Holinsys" {
@@ -448,5 +469,164 @@ func TestResumeErrorsAreSpanish(t *testing.T) {
 func TestUsageMentionsResume(t *testing.T) {
 	if !strings.Contains(usageText, "nexus resume <id> [--json]") || !strings.Contains(usageText, "misma tarea") {
 		t.Fatal("el uso debe documentar que resume continúa la misma tarea")
+	}
+}
+
+func TestAmbiguousBareNameListsCandidates(t *testing.T) {
+	a := newApp(t)
+	a.mustRun(t, "client", "add", "sonrisa de colores")
+	a.mustRun(t, "client", "add", "inspira salud")
+	a.mustRun(t, "project", "add", "diseno de web", "-c", "sonrisa de colores")
+	a.mustRun(t, "project", "add", "diseno de web", "-c", "inspira salud")
+
+	wantErrMsg := "«diseno de web» existe en varios clientes: #1 sonrisa de colores/diseno de web, #2 inspira salud/diseno de web. Usa -p \"cliente/proyecto\" o -p #id."
+
+	// start -p
+	_, err := a.run(t, "start", "Nueva tarea", "-p", "diseno de web")
+	wantErr(t, err, wantErrMsg)
+
+	// Iniciar una tarea para luego editarla
+	a.mustRun(t, "start", "Tarea existente", "-p", "sonrisa de colores/diseno de web")
+
+	// edit -p
+	_, err = a.run(t, "edit", "1", "-p", "diseno de web")
+	wantErr(t, err, wantErrMsg)
+
+	// project archive
+	_, err = a.run(t, "project", "archive", "diseno de web")
+	wantErr(t, err, wantErrMsg)
+
+	// project unarchive
+	_, err = a.run(t, "project", "unarchive", "diseno de web")
+	wantErr(t, err, wantErrMsg)
+
+	// project rename
+	_, err = a.run(t, "project", "rename", "diseno de web", "nuevo")
+	wantErr(t, err, wantErrMsg)
+
+	// project mv
+	_, err = a.run(t, "project", "mv", "diseno de web", "-")
+	wantErr(t, err, wantErrMsg)
+
+	// project rm
+	_, err = a.run(t, "project", "rm", "diseno de web", "--yes")
+	wantErr(t, err, wantErrMsg)
+
+	// project merge
+	_, err = a.run(t, "project", "merge", "diseno de web", "#1", "--yes")
+	wantErr(t, err, wantErrMsg)
+}
+
+func TestProjectRefClientProjectAndHashID(t *testing.T) {
+	a := newApp(t)
+	a.mustRun(t, "client", "add", "sonrisa de colores")
+	a.mustRun(t, "client", "add", "inspira salud")
+	a.mustRun(t, "project", "add", "diseno de web", "-c", "sonrisa de colores") // #1
+	a.mustRun(t, "project", "add", "diseno de web", "-c", "inspira salud")      // #2
+	a.mustRun(t, "project", "add", "libre")                                     // #3 sin cliente
+
+	// start -p con "cliente/proyecto"
+	wantOut(t, a.mustRun(t, "start", "T1", "-p", "sonrisa de colores/diseno de web"), "iniciado #1 T1\n")
+	// start -p con "#id"
+	wantOut(t, a.mustRun(t, "start", "T2", "-p", "#2"), "iniciado #2 T2\n")
+	// start -p con bare number
+	wantOut(t, a.mustRun(t, "start", "T3", "-p", "2"), "iniciado #3 T3\n")
+	// start -p con "-/proyecto"
+	wantOut(t, a.mustRun(t, "start", "T4", "-p", "-/libre"), "iniciado #4 T4\n")
+
+	// edit -p con "cliente/proyecto"
+	wantOut(t, a.mustRun(t, "edit", "1", "-p", "inspira salud/diseno de web"), "editado #1 T1\n")
+	// edit -p con "#id"
+	wantOut(t, a.mustRun(t, "edit", "1", "-p", "#1"), "editado #1 T1\n")
+	// edit -p con bare number
+	wantOut(t, a.mustRun(t, "edit", "1", "-p", "2"), "editado #1 T1\n")
+
+	// project rename con "cliente/proyecto" y con "#id"
+	wantOut(t, a.mustRun(t, "project", "rename", "sonrisa de colores/diseno de web", "web sonrisa"), "proyecto renombrado #1 web sonrisa\n")
+	wantOut(t, a.mustRun(t, "project", "rename", "#2", "web inspira"), "proyecto renombrado #2 web inspira\n")
+
+	// project mv con "#id" y con "cliente/proyecto"
+	wantOut(t, a.mustRun(t, "project", "mv", "#1", "-"), "proyecto movido #1 web sonrisa: sin cliente\n")
+	wantOut(t, a.mustRun(t, "project", "mv", "-/web sonrisa", "sonrisa de colores"), "proyecto movido #1 web sonrisa: cliente «sonrisa de colores»\n")
+
+	// project merge con "#id"
+	wantOut(t, a.mustRun(t, "project", "merge", "#1", "#2", "--yes"), "proyecto «web sonrisa» unido en «web inspira»\n")
+
+	// project rm con "#id"
+	wantOut(t, a.mustRun(t, "project", "rm", "#2", "--yes"), "proyecto «web inspira» eliminado\n")
+}
+
+func TestProjectsJSONIncludesIDAndTextShowsClientPrefix(t *testing.T) {
+	a := newApp(t)
+	a.mustRun(t, "client", "add", "Acme")
+	a.mustRun(t, "project", "add", "Web", "-c", "Acme")
+	a.mustRun(t, "project", "add", "Libre")
+
+	// Texto: muestra "cliente/proyecto" cuando tiene cliente (orden alfabético por nombre)
+	wantOut(t, a.mustRun(t, "projects"), "Libre\nAcme/Web\n")
+
+	// JSON: incluye id y mantiene campos existentes
+	var projs []map[string]any
+	if err := json.Unmarshal([]byte(a.mustRun(t, "projects", "--json")), &projs); err != nil {
+		t.Fatal(err)
+	}
+	if len(projs) != 2 {
+		t.Fatalf("se esperaban 2 proyectos, se obtuvo: %#v", projs)
+	}
+	if projs[0]["id"] != float64(2) || projs[0]["name"] != "Libre" {
+		t.Fatalf("proyecto 0 = %#v", projs[0])
+	}
+	if projs[1]["id"] != float64(1) || projs[1]["name"] != "Web" || projs[1]["client"] != "Acme" {
+		t.Fatalf("proyecto 1 = %#v", projs[1])
+	}
+}
+
+func TestReportAndListShowClientPrefixForDuplicateNames(t *testing.T) {
+	a := newApp(t)
+	a.mustRun(t, "client", "add", "Cliente A")
+	a.mustRun(t, "client", "add", "Cliente B")
+	a.mustRun(t, "project", "add", "Comun", "-c", "Cliente A") // #1
+	a.mustRun(t, "project", "add", "Comun", "-c", "Cliente B") // #2
+	a.mustRun(t, "project", "add", "Unico", "-c", "Cliente A") // #3
+
+	a.mustRun(t, "start", "T1", "-p", "#1")
+	*a.now = a.now.Add(10 * time.Minute)
+	a.mustRun(t, "stop", "1")
+
+	a.mustRun(t, "start", "T2", "-p", "#2")
+	*a.now = a.now.Add(10 * time.Minute)
+	a.mustRun(t, "stop", "2")
+
+	a.mustRun(t, "start", "T3", "-p", "#3")
+	*a.now = a.now.Add(10 * time.Minute)
+	a.mustRun(t, "stop", "3")
+
+	// report muestra cliente/proyecto para nombres duplicados
+	reportOut := a.mustRun(t, "report")
+	if !strings.Contains(reportOut, "Cliente A/Comun") || !strings.Contains(reportOut, "Cliente B/Comun") {
+		t.Fatalf("report debe mostrar cliente/proyecto para nombres duplicados: %s", reportOut)
+	}
+	if !strings.Contains(reportOut, "Unico") || strings.Contains(reportOut, "Cliente A/Unico") {
+		t.Fatalf("report no debe prefijar nombres únicos: %s", reportOut)
+	}
+
+	// ls --json muestra cliente/proyecto para nombres duplicados
+	var list struct {
+		Recent []map[string]any `json:"recent"`
+		Tasks  []map[string]any `json:"tasks"`
+	}
+	if err := json.Unmarshal([]byte(a.mustRun(t, "ls", "--json")), &list); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range list.Recent {
+		if r["title"] == "T1" && r["project"] != "Cliente A/Comun" {
+			t.Fatalf("recent T1 project = %v, se esperaba Cliente A/Comun", r["project"])
+		}
+		if r["title"] == "T2" && r["project"] != "Cliente B/Comun" {
+			t.Fatalf("recent T2 project = %v, se esperaba Cliente B/Comun", r["project"])
+		}
+		if r["title"] == "T3" && r["project"] != "Unico" {
+			t.Fatalf("recent T3 project = %v, se esperaba Unico", r["project"])
+		}
 	}
 }

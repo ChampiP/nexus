@@ -42,15 +42,17 @@ type TaskSummary struct {
 
 // ProjectTotal is the tracked duration for one project, in whole seconds.
 type ProjectTotal struct {
-	Project string
-	Seconds int64
+	Project   string
+	ProjectID int64
+	Seconds   int64
 }
 
 // ProjectUsage summarizes the most recent use and total duration of a project.
 type ProjectUsage struct {
-	Name     string
-	LastUsed int64
-	Seconds  int64
+	Name      string
+	ProjectID int64
+	LastUsed  int64
+	Seconds   int64
 }
 
 var (
@@ -64,4 +66,6 @@ var (
 	ErrAlreadyRunning = errors.New("task already has a running session")
 	// ErrInvalidKind indica que el tipo de entrada no es "work" ni "break".
 	ErrInvalidKind = errors.New("invalid entry kind")
+	// ErrAmbiguousProject indica que existen varios proyectos con el mismo nombre y se requiere desambiguar por ID.
+	ErrAmbiguousProject = errors.New("ambiguous project name")
 )

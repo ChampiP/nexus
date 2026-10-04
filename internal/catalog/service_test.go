@@ -151,8 +151,12 @@ func TestProjectCreateRenameMoveArchive(t *testing.T) {
 	if p.Name != "Nexus" || p.ClientID == nil || *p.ClientID != c.ID {
 		t.Fatalf("project = %+v", p)
 	}
-	if _, err := s.CreateProject("nexus", 0); !errors.Is(err, ErrDuplicateName) {
+	if _, err := s.CreateProject("nexus", c.ID); !errors.Is(err, ErrDuplicateName) {
 		t.Fatalf("dup = %v", err)
+	}
+	otherClientless := must(s.CreateProject("nexus", 0))
+	if otherClientless.Name != "nexus" {
+		t.Fatalf("proyecto sin cliente = %+v", otherClientless)
 	}
 	if _, err := s.CreateProject("", 0); !errors.Is(err, ErrEmptyName) {
 		t.Fatalf("blank = %v", err)
@@ -160,7 +164,7 @@ func TestProjectCreateRenameMoveArchive(t *testing.T) {
 	if _, err := s.CreateProject("x", 999); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing client = %v", err)
 	}
-	other := must(s.CreateProject("Otro", 0))
+	other := must(s.CreateProject("Otro", c.ID))
 	if err := s.RenameProject(other.ID, "NEXUS"); !errors.Is(err, ErrDuplicateName) {
 		t.Fatalf("rename dup = %v", err)
 	}
@@ -300,5 +304,106 @@ func TestTreeGroupingAndOrder(t *testing.T) {
 	want := "[Alpha] (Apple) A-proj b-proj (beta)[Empty][zeta][none] (Loose) in-loose (no client) personal"
 	if names != want {
 		t.Fatalf("tree = %q\nwant   %q", names, want)
+	}
+}
+
+func TestProjectsUniquePerClient(t *testing.T) {
+	// (1) Mismo nombre bajo distintos clientes permitido.
+	s, _ := newService(t)
+	c1 := must(s.CreateClient("Cliente 1", 0))
+	c2 := must(s.CreateClient("Cliente 2", 0))
+
+	p1 := must(s.CreateProject("Diseno", c1.ID))
+	p2, err := s.CreateProject("diseno", c2.ID)
+	if err != nil {
+		t.Fatalf("mismo nombre bajo dos clientes debe estar permitido: %v", err)
+	}
+	if p2.ID == p1.ID {
+		t.Fatal("los proyectos deben ser distintos")
+	}
+
+	// (2) Mismo nombre en el mismo cliente -> ErrDuplicateName (create, rename, move).
+	if _, err := s.CreateProject("DISENO", c1.ID); !errors.Is(err, ErrDuplicateName) {
+		t.Fatalf("create duplicado en el mismo cliente debe fallar con ErrDuplicateName: %v", err)
+	}
+	other1 := must(s.CreateProject("Otro", c1.ID))
+	if err := s.RenameProject(other1.ID, "diseno"); !errors.Is(err, ErrDuplicateName) {
+		t.Fatalf("rename duplicado en el mismo cliente debe fallar con ErrDuplicateName: %v", err)
+	}
+	if err := s.MoveProject(p2.ID, c1.ID); !errors.Is(err, ErrDuplicateName) {
+		t.Fatalf("move hacia cliente con nombre colisionante debe fallar con ErrDuplicateName: %v", err)
+	}
+
+	// (3) Duplicados sin cliente -> ErrDuplicateName (create, rename, move).
+	pNone := must(s.CreateProject("Sin Cliente", 0))
+	if _, err := s.CreateProject("sin cliente", 0); !errors.Is(err, ErrDuplicateName) {
+		t.Fatalf("create duplicado sin cliente debe fallar con ErrDuplicateName: %v", err)
+	}
+	otherNone := must(s.CreateProject("Otro Libre", 0))
+	if err := s.RenameProject(otherNone.ID, "SIN CLIENTE"); !errors.Is(err, ErrDuplicateName) {
+		t.Fatalf("rename duplicado sin cliente debe fallar con ErrDuplicateName: %v", err)
+	}
+	pUnderClient := must(s.CreateProject("Sin Cliente", c1.ID))
+	if err := s.MoveProject(pUnderClient.ID, 0); !errors.Is(err, ErrDuplicateName) {
+		t.Fatalf("move hacia sin cliente con nombre colisionante debe fallar con ErrDuplicateName: %v", err)
+	}
+	_ = pNone
+
+	// (4) MergeProjects entre clientes distintos funciona correctamente.
+	if err := s.MergeProjects(p2.ID, p1.ID); err != nil {
+		t.Fatalf("MergeProjects entre proyectos de distintos clientes falló: %v", err)
+	}
+}
+
+func TestEnsureProjectAndProjectsNamed(t *testing.T) {
+	s, _ := newService(t)
+	c1 := must(s.CreateClient("Cliente 1", 0))
+	c2 := must(s.CreateClient("Cliente 2", 0))
+
+	// EnsureProject(name, client) idempotente y con ámbito por cliente.
+	ep1, err := s.repo.EnsureProject("Web", c1.ID)
+	if err != nil {
+		t.Fatalf("EnsureProject primer cliente: %v", err)
+	}
+	ep1Again, err := s.repo.EnsureProject("web", c1.ID)
+	if err != nil || ep1Again.ID != ep1.ID {
+		t.Fatalf("EnsureProject idempotente falló: %v, %v", ep1Again, err)
+	}
+
+	ep2, err := s.repo.EnsureProject("Web", c2.ID)
+	if err != nil {
+		t.Fatalf("EnsureProject segundo cliente: %v", err)
+	}
+	if ep2.ID == ep1.ID {
+		t.Fatal("EnsureProject con diferente cliente debe crear o retornar proyecto independiente")
+	}
+
+	// ProjectsNamed lista ambos.
+	named, err := s.repo.ProjectsNamed("web")
+	if err != nil {
+		t.Fatalf("ProjectsNamed: %v", err)
+	}
+	if len(named) != 2 {
+		t.Fatalf("ProjectsNamed esperaba 2 proyectos, obtuvo %d", len(named))
+	}
+
+	// Adaptador ambiguo retorna ErrAmbiguousProject.
+	_, err = s.repo.EnsureProject("Web")
+	if !errors.Is(err, ErrAmbiguousProject) {
+		t.Fatalf("wrapper ambiguo con múltiples proyectos debe retornar ErrAmbiguousProject, obtuvo %v", err)
+	}
+
+	// EnsureProject sin cliente cuando no existe crea sin cliente.
+	epNone, err := s.repo.EnsureProject("UnicoLibre")
+	if err != nil {
+		t.Fatalf("EnsureProject wrapper único: %v", err)
+	}
+	if epNone.ClientID != nil {
+		t.Fatalf("EnsureProject wrapper nuevo debe ser sin cliente, tiene %v", *epNone.ClientID)
+	}
+	// Si solo hay uno, el wrapper lo resuelve sin error.
+	epNoneAgain, err := s.repo.EnsureProject("unicolibre")
+	if err != nil || epNoneAgain.ID != epNone.ID {
+		t.Fatalf("EnsureProject wrapper resolución única: %v, %v", epNoneAgain, err)
 	}
 }

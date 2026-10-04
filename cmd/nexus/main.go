@@ -210,7 +210,18 @@ type catalogProjects struct{ catalog *catalog.SQLite }
 
 func (c catalogProjects) EnsureProject(name string) (int64, error) {
 	project, err := c.catalog.EnsureProject(name)
+	if errors.Is(err, catalog.ErrAmbiguousProject) {
+		return 0, errors.Join(tracking.ErrAmbiguousProject, catalog.ErrAmbiguousProject)
+	}
 	return project.ID, err
+}
+
+func (c catalogProjects) ProjectName(id int64) (string, error) {
+	project, err := c.catalog.Project(id)
+	if err != nil {
+		return "", err
+	}
+	return project.Name, nil
 }
 
 // orderedMigrations enumera el orden por dependencias entre módulos.
@@ -226,6 +237,7 @@ func orderedMigrations() []platformdb.Migration {
 		trackingSteps[1],  // tracking v2: referencia projects
 		trackingSteps[2],  // tracking v3: identidad de tareas
 		trackingSteps[3],  // tracking v4: integridad e índices
+		catalogSteps[2],   // catalog v3: unicidad de proyectos por cliente
 		countdownSteps[0], // countdown v1
 		countdownSteps[1], // countdown v2: referencia entries
 		wellbeingSteps[0], // wellbeing v1

@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/oklog/ulid/v2"
 	"modernc.org/sqlite"
@@ -46,7 +47,30 @@ CREATE TABLE projects (
     UNIQUE(name COLLATE NOCASE)
 );`)
 		return err
-	}}, {Module: "catalog", Version: 2, Up: migrateClientNames}}
+	}}, {Module: "catalog", Version: 2, Up: migrateClientNames},
+		{Module: "catalog", Version: 3, DisableForeignKeys: true, Up: migrateProjectNamesPerClient}}
+}
+
+func migrateProjectNamesPerClient(tx *sql.Tx) error {
+	// Reconstruye la tabla projects para permitir nombres duplicados entre distintos clientes
+	// y conservar la unicidad por cliente (y global para proyectos sin cliente).
+	const query = `
+CREATE TABLE projects_new (
+    id INTEGER PRIMARY KEY,
+    uid TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL,
+    client_id INTEGER NULL REFERENCES clients(id) ON DELETE SET NULL,
+    archived_at INTEGER NULL,
+    UNIQUE(client_id, name COLLATE NOCASE)
+);
+INSERT INTO projects_new(id, uid, name, client_id, archived_at)
+    SELECT id, uid, name, client_id, archived_at FROM projects;
+DROP TABLE projects;
+ALTER TABLE projects_new RENAME TO projects;
+CREATE UNIQUE INDEX projects_null_client_name_idx ON projects(name COLLATE NOCASE) WHERE client_id IS NULL;
+`
+	_, err := tx.Exec(query)
+	return err
 }
 
 func migrateClientNames(tx *sql.Tx) error {
@@ -77,27 +101,94 @@ func migrateClientNames(tx *sql.Tx) error {
 	return err
 }
 
-// EnsureProject returns the project with that name (case-insensitive), creating it if needed.
-func (s *SQLite) EnsureProject(name string) (Project, error) {
-	if _, err := s.db.Exec(`INSERT INTO projects(uid, name) VALUES (?, ?) ON CONFLICT DO NOTHING`, ulid.Make().String(), name); err != nil {
-		return Project{}, fmt.Errorf("create project: %w", err)
+// EnsureProject devuelve el proyecto con ese nombre (ignorando mayúsculas y minúsculas) bajo el cliente indicado, creándolo si es necesario.
+// Si no se especifica clientID, actúa como adaptador de compatibilidad: resuelve por nombre y retorna ErrAmbiguousProject
+// si el proyecto existe bajo más de un cliente.
+func (s *SQLite) EnsureProject(name string, clientID ...int64) (Project, error) {
+	name, err := cleanName(name)
+	if err != nil {
+		return Project{}, err
 	}
+	if len(clientID) == 0 {
+		matches, err := s.ProjectsNamed(name)
+		if err != nil {
+			return Project{}, err
+		}
+		if len(matches) > 1 {
+			return Project{}, ErrAmbiguousProject
+		}
+		if len(matches) == 1 {
+			return matches[0], nil
+		}
+		return s.EnsureProject(name, 0)
+	}
+
+	cid := clientID[0]
 	var p Project
 	var client, archived sql.NullInt64
-	err := s.db.QueryRow(`SELECT id, uid, name, client_id, archived_at FROM projects WHERE name = ? COLLATE NOCASE`, name).Scan(&p.ID, &p.UID, &p.Name, &client, &archived)
-	if err != nil {
+	err = s.db.QueryRow(`SELECT id, uid, name, client_id, archived_at FROM projects WHERE name = ? COLLATE NOCASE AND client_id IS NULLIF(?, 0)`, name, cid).Scan(&p.ID, &p.UID, &p.Name, &client, &archived)
+	if err == nil {
+		if client.Valid {
+			p.ClientID = &client.Int64
+		}
+		if archived.Valid {
+			p.ArchivedAt = &archived.Int64
+		}
+		return p, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
 		return Project{}, fmt.Errorf("find project: %w", err)
 	}
-	if client.Valid {
-		p.ClientID = &client.Int64
+
+	id, uid, err := s.create(`INSERT INTO projects(uid, name, client_id) VALUES (?, ?, NULLIF(?, 0))`, name, cid)
+	if err != nil {
+		if errors.Is(err, ErrDuplicateName) {
+			err = s.db.QueryRow(`SELECT id, uid, name, client_id, archived_at FROM projects WHERE name = ? COLLATE NOCASE AND client_id IS NULLIF(?, 0)`, name, cid).Scan(&p.ID, &p.UID, &p.Name, &client, &archived)
+			if err == nil {
+				if client.Valid {
+					p.ClientID = &client.Int64
+				}
+				if archived.Valid {
+					p.ArchivedAt = &archived.Int64
+				}
+				return p, nil
+			}
+		}
+		return Project{}, fmt.Errorf("create project: %w", err)
 	}
-	if archived.Valid {
-		p.ArchivedAt = &archived.Int64
+	p = Project{ID: id, UID: uid, Name: name}
+	if cid != 0 {
+		p.ClientID = &cid
 	}
 	return p, nil
 }
 
-// mapErr translates SQLite constraint failures into the module's sentinel errors.
+// ProjectsNamed devuelve todos los proyectos con ese nombre (ignorando mayúsculas/minúsculas) en todos los clientes.
+func (s *SQLite) ProjectsNamed(name string) ([]Project, error) {
+	rows, err := s.db.Query(`SELECT id, uid, name, client_id, archived_at FROM projects WHERE name = ? COLLATE NOCASE ORDER BY id`, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var projects []Project
+	for rows.Next() {
+		var p Project
+		var client, archived sql.NullInt64
+		if err := rows.Scan(&p.ID, &p.UID, &p.Name, &client, &archived); err != nil {
+			return nil, err
+		}
+		if client.Valid {
+			p.ClientID = &client.Int64
+		}
+		if archived.Valid {
+			p.ArchivedAt = &archived.Int64
+		}
+		projects = append(projects, p)
+	}
+	return projects, rows.Err()
+}
+
+// mapErr traduce los fallos de restricciones SQLite en los errores centinela del módulo.
 func mapErr(err error) error {
 	var se *sqlite.Error
 	if errors.As(err, &se) {
@@ -106,6 +197,9 @@ func mapErr(err error) error {
 			return ErrDuplicateName
 		case sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY:
 			return ErrNotFound
+		}
+		if se.Code()&0xff == sqlite3.SQLITE_CONSTRAINT && strings.Contains(strings.ToUpper(se.Error()), "UNIQUE") {
+			return ErrDuplicateName
 		}
 	}
 	return err
@@ -156,8 +250,11 @@ func (s *SQLite) CreateClient(name string, organizationID int64) (Client, error)
 	return c, err
 }
 
-// CreateProject inserts a project; clientID 0 means none.
+// CreateProject inserta un proyecto; clientID 0 significa sin cliente.
 func (s *SQLite) CreateProject(name string, clientID int64) (Project, error) {
+	if s.ProjectNameTaken(name, clientID, 0) {
+		return Project{}, ErrDuplicateName
+	}
 	id, uid, err := s.create(`INSERT INTO projects(uid, name, client_id) VALUES (?, ?, NULLIF(?, 0))`, name, clientID)
 	p := Project{ID: id, UID: uid, Name: name}
 	if clientID != 0 {
@@ -214,10 +311,10 @@ func (s *SQLite) Project(id int64) (Project, error) {
 	return p, nil
 }
 
-// ProjectNameTaken reports whether a project other than exceptID has name (case-insensitive).
-func (s *SQLite) ProjectNameTaken(name string, exceptID int64) bool {
+// ProjectNameTaken comprueba si ya existe otro proyecto con ese nombre bajo el mismo cliente (o sin cliente si clientID es 0).
+func (s *SQLite) ProjectNameTaken(name string, clientID int64, exceptID int64) bool {
 	var one int
-	err := s.db.QueryRow(`SELECT 1 FROM projects WHERE name = ? COLLATE NOCASE AND id <> ?`, name, exceptID).Scan(&one)
+	err := s.db.QueryRow(`SELECT 1 FROM projects WHERE client_id IS NULLIF(?, 0) AND name = ? COLLATE NOCASE AND id <> ?`, clientID, name, exceptID).Scan(&one)
 	return err == nil
 }
 

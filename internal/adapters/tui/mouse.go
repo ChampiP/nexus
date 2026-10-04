@@ -14,11 +14,14 @@ func (m *Model) updateWideMouse(msg tea.MouseMsg, g wideGeometry, layout screenL
 		return m, nil
 	}
 	if msg.X >= g.rightX && msg.X < g.rightX+g.rightWidth {
+		m.wideColumn = 2
+		m.syncInputFocus()
 		local := msg
 		local.X -= g.rightX
 		return m.updateBreakMouse(local)
 	}
 	if msg.X >= g.leftX && msg.X < g.leftX+g.leftWidth {
+		m.wideColumn = 0
 		for i, zone := range layout.fields {
 			if zone.contains(msg.X, msg.Y) {
 				m.focus = focusTarget(i)
@@ -61,6 +64,8 @@ func (m *Model) updateWideMouse(msg tea.MouseMsg, g wideGeometry, layout screenL
 		return m, nil
 	}
 	if msg.X >= g.centerX && msg.X < g.centerX+g.centerWidth {
+		m.wideColumn = 1
+		m.syncInputFocus()
 		if m.clickRows(focusRecent, layout.recent, 0, msg.X, msg.Y) {
 			return m, nil
 		}

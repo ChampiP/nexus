@@ -72,6 +72,7 @@ type listOutput struct {
 	Tasks []taskOutput `json:"tasks"`
 }
 type projectOutput struct {
+	ID       int64  `json:"id"`
 	Name     string `json:"name"`
 	LastUsed int64  `json:"last_used"`
 	Seconds  int64  `json:"seconds"`

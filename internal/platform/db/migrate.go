@@ -1,18 +1,21 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 )
 
 // Migration is one transactional schema step owned by a module.
 type Migration struct {
-	Module  string
-	Version int
-	Up      func(*sql.Tx) error
+	Module             string
+	Version            int
+	Up                 func(*sql.Tx) error
+	DisableForeignKeys bool
 }
 
 // Migrate applies the pending migrations in slice order, each in its own transaction together
@@ -92,12 +95,49 @@ func Migrate(db *sql.DB, path string, migrations []Migration, now func() time.Ti
 // applyOne runs m and records it atomically. The schema_migrations insert comes first so that
 // a concurrent process that already applied m makes this one a no-op.
 func applyOne(db *sql.DB, m Migration, now time.Time) (bool, error) {
-	tx, err := db.Begin()
+	if !m.DisableForeignKeys {
+		tx, err := db.Begin()
+		if err != nil {
+			return false, err
+		}
+		defer tx.Rollback()
+		result, err := tx.Exec(`INSERT OR IGNORE INTO schema_migrations(module, version, applied_at) VALUES (?, ?, ?)`, m.Module, m.Version, now.Unix())
+		if err != nil {
+			return false, err
+		}
+		if n, err := result.RowsAffected(); err != nil || n == 0 {
+			return false, err
+		}
+		if err := m.Up(tx); err != nil {
+			return false, err
+		}
+		return true, tx.Commit()
+	}
+
+	// Cuando se solicita DisableForeignKeys, se fija una conexión única para garantizar
+	// que los cambios de pragma y la transacción ocurran sobre la misma conexión física.
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return false, fmt.Errorf("pin migration connection: %w", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return false, fmt.Errorf("disable foreign keys: %w", err)
+	}
+	// Garantiza que foreign_keys se reactive en cualquier ruta de salida o error.
+	defer func() {
+		_, _ = conn.ExecContext(context.Background(), `PRAGMA foreign_keys = ON`)
+	}()
+
+	tx, err := conn.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback()
-	result, err := tx.Exec(`INSERT OR IGNORE INTO schema_migrations(module, version, applied_at) VALUES (?, ?, ?)`, m.Module, m.Version, now.Unix())
+
+	result, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(module, version, applied_at) VALUES (?, ?, ?)`, m.Module, m.Version, now.Unix())
 	if err != nil {
 		return false, err
 	}
@@ -107,7 +147,41 @@ func applyOne(db *sql.DB, m Migration, now time.Time) (bool, error) {
 	if err := m.Up(tx); err != nil {
 		return false, err
 	}
-	return true, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+
+	// Comprueba la integridad referencial antes de dar por buena la migración.
+	rows, err := conn.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	if err != nil {
+		return false, fmt.Errorf("foreign_key_check: %w", err)
+	}
+	var violations []string
+	for rows.Next() {
+		var table, parent string
+		var rowid, fkid int64
+		if err := rows.Scan(&table, &rowid, &parent, &fkid); err != nil {
+			rows.Close()
+			return false, fmt.Errorf("scan foreign_key_check: %w", err)
+		}
+		violations = append(violations, fmt.Sprintf("table %s rowid %d references %s (fkid %d)", table, rowid, parent, fkid))
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return false, fmt.Errorf("foreign_key_check rows: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return false, fmt.Errorf("close foreign_key_check rows: %w", err)
+	}
+	if len(violations) > 0 {
+		return false, fmt.Errorf("foreign key check failed: %s", strings.Join(violations, "; "))
+	}
+
+	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
+		return false, fmt.Errorf("enable foreign keys: %w", err)
+	}
+
+	return true, nil
 }
 
 func backupTo(db *sql.DB, path string, now time.Time) (string, error) {

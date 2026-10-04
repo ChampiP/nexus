@@ -140,12 +140,10 @@ func (m *Model) goTo(c navCell) {
 	}
 	if m.focus == focusProject {
 		m.closeProjectPicker()
-	} else {
-		if previous == focusProject {
-			m.closeProjectPicker()
-		}
-		m.syncInputFocus()
+	} else if previous == focusProject {
+		m.closeProjectPicker()
 	}
+	m.syncInputFocus()
 }
 
 // revealRunning ajusta el desplazamiento para que la fila enfocada quede visible.

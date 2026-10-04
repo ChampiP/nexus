@@ -177,39 +177,113 @@ func (m Model) hint() string {
 	}
 }
 
+type projectBarItem struct {
+	projectID int64
+	project   string
+	label     string
+	seconds   int64
+}
+
+// projectBars agrupa y ordena las barras de duración según ProjectTotal.ProjectID,
+// y etiqueta como «proyecto (cliente)» cuando dos nombres mostrados colisionan.
+func (m Model) projectBars() []projectBarItem {
+	type barKey struct {
+		id   int64
+		name string
+	}
+	keyed := make(map[barKey]*projectBarItem)
+	var order []*projectBarItem
+	for _, item := range m.totals {
+		var key barKey
+		if item.ProjectID > 0 {
+			key = barKey{id: item.ProjectID}
+		} else {
+			key = barKey{name: strings.ToLower(item.Project)}
+		}
+		if existing, ok := keyed[key]; ok {
+			existing.seconds += item.Seconds
+			if existing.project == "" && item.Project != "" {
+				existing.project = item.Project
+			}
+		} else {
+			entry := &projectBarItem{
+				projectID: item.ProjectID,
+				project:   item.Project,
+				seconds:   item.Seconds,
+			}
+			keyed[key] = entry
+			order = append(order, entry)
+		}
+	}
+	sort.Slice(order, func(i, j int) bool {
+		if order[i].seconds != order[j].seconds {
+			return order[i].seconds > order[j].seconds
+		}
+		return order[i].projectID < order[j].projectID
+	})
+
+	nameCounts := make(map[string]int, len(order))
+	for _, item := range order {
+		name := item.project
+		if name == "" {
+			name = "Sin proyecto"
+		}
+		nameCounts[strings.ToLower(name)]++
+	}
+
+	for _, item := range order {
+		name := item.project
+		if name == "" {
+			name = "Sin proyecto"
+		}
+		if nameCounts[strings.ToLower(name)] > 1 {
+			client := m.projectClientName(item.projectID)
+			if client != "" {
+				item.label = fmt.Sprintf("%s (%s)", name, client)
+			} else {
+				item.label = name
+			}
+		} else {
+			item.label = name
+		}
+	}
+
+	result := make([]projectBarItem, len(order))
+	for i, ptr := range order {
+		result[i] = *ptr
+	}
+	return result
+}
+
 func (m Model) dashboardPanel(layout screenLayout) string {
 	rangeName := "Hoy"
 	if m.week {
 		rangeName = "Semana"
 	}
 	lines := []string{titleStyle.Render("TIEMPO POR PROYECTO · " + rangeName)}
-	totals := append([]tracking.ProjectTotal(nil), m.totals...)
-	sort.Slice(totals, func(i, j int) bool { return totals[i].Seconds > totals[j].Seconds })
+	bars := m.projectBars()
 	maxSeconds := int64(0)
-	for _, item := range totals {
-		if item.Seconds > maxSeconds {
-			maxSeconds = item.Seconds
+	for _, item := range bars {
+		if item.seconds > maxSeconds {
+			maxSeconds = item.seconds
 		}
 	}
 	barWidth := m.width / 6
 	if barWidth < 8 {
 		barWidth = 8
 	}
-	for i, item := range totals {
-		name := item.Project
-		if name == "" {
-			name = "Sin proyecto"
-		}
+	for i, item := range bars {
+		name := item.label
 		width := 0
 		if maxSeconds > 0 {
-			width = int(float64(item.Seconds) / float64(maxSeconds) * float64(barWidth))
-			if item.Seconds > 0 && width == 0 {
+			width = int(float64(item.seconds) / float64(maxSeconds) * float64(barWidth))
+			if item.seconds > 0 && width == 0 {
 				width = 1
 			}
 		}
-		lines = append(lines, fmt.Sprintf("%-18s %s %s", truncate(name, 18), lipgloss.NewStyle().Foreground(projectColor(i)).Render(strings.Repeat("█", width)), formatDuration(item.Seconds)))
+		lines = append(lines, fmt.Sprintf("%-18s %s %s", truncate(name, 18), lipgloss.NewStyle().Foreground(projectColor(i)).Render(strings.Repeat("█", width)), formatDuration(item.seconds)))
 	}
-	if len(totals) == 0 {
+	if len(bars) == 0 {
 		lines = append(lines, label.Render("Sin tiempo registrado en este período"))
 	}
 	lines = append(lines, "", titleStyle.Render("RECIENTES"))

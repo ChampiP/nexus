@@ -61,6 +61,7 @@ type Model struct {
 	now                 time.Time
 	message             string
 	selectedProject     string
+	selectedProjectID   int64
 	catalog             Catalog
 	tree                []catalog.TreeOrganization
 	screen              screen
@@ -352,9 +353,11 @@ func (m *Model) startTimer() {
 	title := strings.TrimSpace(m.inputs[0].Value())
 	if title == "" {
 		m.setMessage("Escribe un título")
+		m.focus = focusTitle
+		m.syncInputFocus()
 		return
 	}
-	entry, err := m.tracker.Start(tracking.StartInput{Title: title, Project: m.selectedProject, Description: strings.TrimSpace(m.inputs[2].Value())})
+	entry, err := m.tracker.Start(tracking.StartInput{Title: title, Project: m.selectedProject, ProjectID: m.selectedProjectID, Description: strings.TrimSpace(m.inputs[2].Value())})
 	if err != nil {
 		m.setMessage(errorText("No se pudo iniciar", err))
 		return
@@ -370,19 +373,39 @@ func (m *Model) startTimer() {
 
 func (m *Model) cycleProject(delta int) {
 	projects := m.pickerProjects("")
-	choices := make([]string, 1, len(projects)+1)
+	type choice struct {
+		id   int64
+		name string
+	}
+	choices := []choice{{id: 0, name: ""}}
 	for _, project := range projects {
-		choices = append(choices, project.Name)
+		choices = append(choices, choice{id: project.ID, name: project.Name})
 	}
 	index := -1
-	for i, project := range choices {
-		if strings.EqualFold(project, m.selectedProject) {
-			index = i
-			break
+	for i, c := range choices {
+		if m.selectedProjectID > 0 {
+			if c.id == m.selectedProjectID {
+				index = i
+				break
+			}
+		} else if m.selectedProject != "" {
+			if c.id == 0 && strings.EqualFold(c.name, m.selectedProject) {
+				index = i
+				break
+			}
+		} else {
+			if c.id == 0 && c.name == "" {
+				index = i
+				break
+			}
 		}
 	}
+	if index == -1 {
+		index = 0
+	}
 	index = (index + delta + len(choices)) % len(choices)
-	m.selectedProject = choices[index]
+	m.selectedProjectID = choices[index].id
+	m.selectedProject = choices[index].name
 	m.inputs[1].SetValue(m.selectedProject)
 }
 
@@ -417,6 +440,9 @@ func (m *Model) syncInputFocus() {
 }
 
 func (m Model) inputIndex() int {
+	if m.width >= 120 && m.wideColumn != 0 {
+		return -1
+	}
 	switch m.focus {
 	case focusTitle:
 		return 0

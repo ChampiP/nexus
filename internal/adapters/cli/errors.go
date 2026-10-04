@@ -34,9 +34,32 @@ func localize(err error) error {
 		return errors.New("no existe")
 	case errors.Is(err, catalog.ErrDuplicateName):
 		return errors.New("ya existe un elemento con ese nombre")
+	case errors.Is(err, catalog.ErrAmbiguousProject), errors.Is(err, tracking.ErrAmbiguousProject):
+		var amb *ambiguousProjectError
+		if errors.As(err, &amb) {
+			return amb
+		}
+		if err.Error() != catalog.ErrAmbiguousProject.Error() && err.Error() != tracking.ErrAmbiguousProject.Error() {
+			return err
+		}
+		return errors.New("el proyecto existe en varios clientes; usa -p \"cliente/proyecto\" o -p #id")
 	default:
 		return err
 	}
+}
+
+// ambiguousProjectError conserva el mensaje detallado de candidatos y satisface errors.Is para
+// tracking.ErrAmbiguousProject y catalog.ErrAmbiguousProject.
+type ambiguousProjectError struct {
+	message string
+}
+
+func (e *ambiguousProjectError) Error() string {
+	return e.message
+}
+
+func (e *ambiguousProjectError) Is(target error) bool {
+	return target == catalog.ErrAmbiguousProject || target == tracking.ErrAmbiguousProject
 }
 
 // kind describe un tipo de elemento del catálogo con el texto necesario para redactar mensajes.

@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -194,7 +193,7 @@ func (m Model) wideGeometry() (wideGeometry, bool) {
 	} else {
 		g.week = rect{g.centerContentX + lipgloss.Width("[ Hoy ]    "), 3, lipgloss.Width("Semana"), 1}
 	}
-	totalsLines := max(1, len(m.totals))
+	totalsLines := max(1, len(m.projectBars()))
 	recentY := 2 + 4 + totalsLines
 	for i := range m.recent {
 		y := recentY + i
@@ -206,6 +205,10 @@ func (m Model) wideGeometry() (wideGeometry, bool) {
 }
 
 func (m *Model) updateWideKey(key tea.KeyMsg) tea.Cmd {
+	if key.Type == tea.KeyCtrlZ && m.confirm == nil {
+		m.restoreLast()
+		return nil
+	}
 	if key.Type == tea.KeyEsc {
 		if m.screen == screenBreak {
 			m.switchScreen(screenTimers)
@@ -220,31 +223,99 @@ func (m *Model) updateWideKey(key tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	}
-	if key.Type == tea.KeyEnter {
-		if m.focus == focusTabs {
-			m.openCatalogOverlay()
-			return nil
-		}
-		if m.wideColumn == 2 {
-			return m.updateBreakKey(key)
-		}
-		return m.updateKey(key)
-	}
 	if m.screen == screenTimers && m.confirm != nil {
 		m.updateConfirm(key)
 		return nil
 	}
-	if m.wideColumn == 2 && m.brk == nil && m.breakCell().kind == brkForm && m.breakCell().index == breakRowCustom {
-		if key.Type == tea.KeyLeft || key.Type == tea.KeyRight {
-			if !inputAtEdge(m.bp.form.custom, key.Type) {
+	if m.focus == focusTabs {
+		if key.Type == tea.KeyEnter {
+			m.openCatalogOverlay()
+			return nil
+		}
+		if m.stepScreen(key.Type) {
+			return nil
+		}
+	}
+
+	// Manejo del selector de proyectos abierto en la columna 0.
+	if m.pickerOpen && m.focus == focusProject && (m.width < 120 || m.wideColumn == 0) {
+		switch key.Type {
+		case tea.KeyUp:
+			m.movePicker(-1)
+			return nil
+		case tea.KeyDown:
+			m.movePicker(1)
+			return nil
+		case tea.KeyEnter:
+			m.selectProject()
+			return nil
+		case tea.KeyTab, tea.KeyShiftTab:
+			m.closeProjectPicker()
+		default:
+			if key.Type == tea.KeyRunes || key.Type == tea.KeySpace || key.Type == tea.KeyBackspace || key.Type == tea.KeyDelete {
 				var cmd tea.Cmd
-				m.bp.form.custom, cmd = m.bp.form.custom.Update(key)
+				m.inputs[1], cmd = m.inputs[1].Update(key)
+				m.pickerIndex = 0
+				for i, option := range m.projectOptions() {
+					if option.selectable {
+						m.pickerIndex = i
+						break
+					}
+				}
 				return cmd
 			}
-		} else if key.Type != tea.KeyUp && key.Type != tea.KeyDown && key.Type != tea.KeyPgUp && key.Type != tea.KeyPgDown && key.Type != tea.KeyHome && key.Type != tea.KeyEnd && key.Type != tea.KeyTab && key.Type != tea.KeyShiftTab {
+			return nil
+		}
+	}
+
+	// Abrir selector de proyectos con teclas de texto o Enter cuando está cerrado.
+	if m.focus == focusProject && !m.pickerOpen && (m.width < 120 || m.wideColumn == 0) {
+		if key.Type == tea.KeyEnter {
+			m.openProjectPicker()
+			return nil
+		}
+		if key.Type == tea.KeyRunes || key.Type == tea.KeySpace || key.Type == tea.KeyBackspace || key.Type == tea.KeyDelete {
+			m.openProjectPicker()
+			var cmd tea.Cmd
+			m.inputs[1], cmd = m.inputs[1].Update(key)
+			m.pickerIndex = 0
+			for i, option := range m.projectOptions() {
+				if option.selectable {
+					m.pickerIndex = i
+					break
+				}
+			}
+			return cmd
+		}
+	}
+
+	// Columna 2 (Breaks / Pausas activas).
+	if m.wideColumn == 2 {
+		if m.brk == nil && m.breakCell().kind == brkForm && m.breakCell().index == breakRowCustom {
+			if key.Type == tea.KeyLeft || key.Type == tea.KeyRight {
+				if !inputAtEdge(m.bp.form.custom, key.Type) {
+					var cmd tea.Cmd
+					m.bp.form.custom, cmd = m.bp.form.custom.Update(key)
+					return cmd
+				}
+			} else if key.Type != tea.KeyUp && key.Type != tea.KeyDown && key.Type != tea.KeyPgUp && key.Type != tea.KeyPgDown && key.Type != tea.KeyHome && key.Type != tea.KeyEnd && key.Type != tea.KeyTab && key.Type != tea.KeyShiftTab {
+				return m.updateBreakKey(key)
+			}
+		}
+		if key.Type == tea.KeyEnter {
 			return m.updateBreakKey(key)
 		}
 	}
+
+	// Navegación dentro del campo de texto activo con flechas horizontales.
+	if index := m.inputIndex(); index >= 0 && (m.width < 120 || m.wideColumn == 0) && (key.Type == tea.KeyLeft || key.Type == tea.KeyRight) {
+		if !inputAtEdge(m.inputs[index], key.Type) {
+			var cmd tea.Cmd
+			m.inputs[index], cmd = m.inputs[index].Update(key)
+			return cmd
+		}
+	}
+
 	current := m.currentCell()
 	if m.wideColumn == 2 {
 		current = m.breakCell()
@@ -262,42 +333,50 @@ func (m *Model) updateWideKey(key tea.KeyMsg) tea.Cmd {
 		m.wideHasRemembered[column] = true
 	}
 	target, nextColumn, ok := grid.move(current, column, key.Type)
-	if !ok {
-		if m.screen == screenTimers && m.inputIndex() >= 0 && (key.Type == tea.KeyLeft || key.Type == tea.KeyRight) {
-			index := m.inputIndex()
-			var cmd tea.Cmd
-			m.inputs[index], cmd = m.inputs[index].Update(key)
-			return cmd
+	if ok {
+		m.wideColumn = nextColumn
+		m.wideRemembered[nextColumn] = target
+		m.wideHasRemembered[nextColumn] = true
+		if target.kind == int(focusTabs) {
+			m.focus = focusTabs
+			m.bp.onTabs = false
+			m.syncInputFocus()
+			m.syncBreakFocus()
+			return nil
 		}
-		return nil
-	}
-	if m.screen == screenTimers && m.inputIndex() >= 0 && (key.Type == tea.KeyLeft || key.Type == tea.KeyRight) && !inputAtEdge(m.inputs[m.inputIndex()], key.Type) {
-		var cmd tea.Cmd
-		index := m.inputIndex()
-		m.inputs[index], cmd = m.inputs[index].Update(key)
-		return cmd
-	}
-	m.wideColumn = nextColumn
-	m.wideRemembered[nextColumn] = target
-	m.wideHasRemembered[nextColumn] = true
-	if target.kind == int(focusTabs) {
-		m.focus = focusTabs
-		m.bp.onTabs = false
+		if nextColumn == 2 {
+			m.goToBreak(target)
+			if target.kind == brkWellbeing && target.index < 3 && (key.Type == tea.KeyLeft || key.Type == tea.KeyRight) {
+				m.savePauseSelection(target.index, target.col)
+			}
+			m.syncInputFocus()
+			m.syncBreakFocus()
+			return nil
+		}
+		m.goTo(target)
 		m.syncInputFocus()
 		m.syncBreakFocus()
 		return nil
 	}
-	if nextColumn == 2 {
-		m.goToBreak(target)
-		if target.kind == brkWellbeing && target.index < 3 && (key.Type == tea.KeyLeft || key.Type == tea.KeyRight) {
-			m.savePauseSelection(target.index, target.col)
-		}
-		m.syncBreakFocus()
-		return nil
+
+	// Teclas de acción o edición que no fueron consumidas por la navegación.
+	if key.Type == tea.KeyEnter {
+		return m.updateKey(key)
 	}
-	m.goTo(target)
-	m.syncBreakFocus()
-	return nil
+
+	// Entrada de texto en inputs activos (Título, Descripción).
+	index := m.inputIndex()
+	if index >= 0 && (m.width < 120 || m.wideColumn == 0) {
+		var cmd tea.Cmd
+		m.inputs[index], cmd = m.inputs[index].Update(key)
+		return cmd
+	}
+
+	if m.wideColumn == 2 {
+		return m.updateBreakKey(key)
+	}
+
+	return m.updateKey(key)
 }
 
 func (g wideNavigation) columnFor(cell navCell, fallback int) int {
@@ -347,13 +426,17 @@ func widePanel(width int, heading, body string) string {
 }
 
 func (m Model) wideTaskForm(width int) string {
-	project := m.selectedProjectPath()
-	if project == "" {
-		project = "Sin proyecto"
-	}
-	projectField := "‹ " + truncateToWidth(project, width-8) + " ›"
-	if m.focus == focusProject {
-		projectField = lipgloss.NewStyle().Bold(true).Foreground(accent).Render(projectField)
+	formActive := m.width < 120 || m.wideColumn == 0
+	projectField := m.inputs[1].View()
+	if !m.pickerOpen {
+		project := m.selectedProjectPath()
+		if project == "" {
+			project = "Sin proyecto"
+		}
+		projectField = "‹ " + truncateToWidth(project, width-8) + " ›"
+		if formActive && m.focus == focusProject {
+			projectField = lipgloss.NewStyle().Bold(true).Foreground(accent).Render(projectField)
+		}
 	}
 	lines := []string{
 		label.Render("Título"), m.inputs[0].View(),
@@ -368,7 +451,7 @@ func (m Model) wideTaskForm(width int) string {
 	if m.edit != nil {
 		lines = append(lines, m.editButtonsLine())
 	} else {
-		lines = append(lines, startLine(m.focus == focusStart))
+		lines = append(lines, startLine(formActive && m.focus == focusStart))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -377,6 +460,7 @@ func (m Model) wideRunning(width int) string {
 	if len(m.running) == 0 {
 		return label.Render("Aún no hay temporizadores activos")
 	}
+	columnActive := m.width < 120 || m.wideColumn == 0
 	var lines []string
 	for i, entry := range m.running {
 		project := entry.Project
@@ -384,7 +468,7 @@ func (m Model) wideRunning(width int) string {
 			project = "Sin proyecto"
 		}
 		prefix := "  "
-		focused := m.focus == focusRunningStart && m.focusedRunning == i
+		focused := columnActive && m.focus == focusRunningStart && m.focusedRunning == i
 		if focused {
 			prefix = "▸ "
 		}
@@ -395,7 +479,11 @@ func (m Model) wideRunning(width int) string {
 		nameWidth := max(8, width-38)
 		projectWidth := max(8, width-nameWidth-35)
 		text := fmt.Sprintf("%s%s%s  ·  %s  ·  %s", prefix, spin, truncate(entry.Title, nameWidth), truncate(project, projectWidth), m.sessionAndTotal(entry))
-		buttons := renderButtons(entryLabels(runningActions), m.selectedButton(focusRunningStart, i))
+		selectedButton := -1
+		if columnActive {
+			selectedButton = m.selectedButton(focusRunningStart, i)
+		}
+		buttons := renderButtons(entryLabels(runningActions), selectedButton)
 		text = truncateToWidth(text, max(1, width-4-lipgloss.Width(buttons)-2))
 		lines = append(lines, text+"  "+buttons)
 	}
@@ -403,44 +491,43 @@ func (m Model) wideRunning(width int) string {
 }
 
 func (m Model) wideDashboard(width int) string {
-	totals := append([]tracking.ProjectTotal(nil), m.totals...)
-	sort.Slice(totals, func(i, j int) bool { return totals[i].Seconds > totals[j].Seconds })
+	bars := m.projectBars()
 	var period int64
-	for _, item := range totals {
-		period += item.Seconds
+	for _, item := range bars {
+		period += item.seconds
 	}
 	heading := fmt.Sprintf("HOY %s · SEMANA %s", formatDuration(m.todaySeconds), formatDuration(period))
-	today := RenderPeriodOption("Hoy", !m.week, m.focus == focusToday)
-	week := RenderPeriodOption("Semana", m.week, m.focus == focusWeek)
-	if m.focus == focusToday {
+	dashActive := m.width < 120 || m.wideColumn == 1
+	todayFocus := dashActive && m.focus == focusToday
+	weekFocus := dashActive && m.focus == focusWeek
+	today := RenderPeriodOption("Hoy", !m.week, todayFocus)
+	week := RenderPeriodOption("Semana", m.week, weekFocus)
+	if todayFocus {
 		today = "▸ " + today
 	}
-	if m.focus == focusWeek {
+	if weekFocus {
 		week = "▸ " + week
 	}
 	periodSelector := today + "    " + week
 	lines := []string{titleStyle.Render(heading), periodSelector}
 	maxSeconds := int64(0)
-	for _, item := range totals {
-		maxSeconds = max(maxSeconds, item.Seconds)
+	for _, item := range bars {
+		maxSeconds = max(maxSeconds, item.seconds)
 	}
 	barWidth := max(4, width/7)
 	nameWidth := max(12, width-barWidth-15)
-	for i, item := range totals {
-		name := item.Project
-		if name == "" {
-			name = "Sin proyecto"
-		}
+	for i, item := range bars {
+		name := item.label
 		bar := 0
 		if maxSeconds > 0 {
-			bar = int(float64(item.Seconds) / float64(maxSeconds) * float64(barWidth))
-			if item.Seconds > 0 && bar == 0 {
+			bar = int(float64(item.seconds) / float64(maxSeconds) * float64(barWidth))
+			if item.seconds > 0 && bar == 0 {
 				bar = 1
 			}
 		}
-		lines = append(lines, fmt.Sprintf("%-*s %s %s", nameWidth, truncate(name, nameWidth), lipgloss.NewStyle().Foreground(projectColor(i)).Render(strings.Repeat("█", bar)), formatDuration(item.Seconds)))
+		lines = append(lines, fmt.Sprintf("%-*s %s %s", nameWidth, truncate(name, nameWidth), lipgloss.NewStyle().Foreground(projectColor(i)).Render(strings.Repeat("█", bar)), formatDuration(item.seconds)))
 	}
-	if len(totals) == 0 {
+	if len(bars) == 0 {
 		lines = append(lines, label.Render("Sin tiempo registrado en este período"))
 	}
 	lines = append(lines, "", titleStyle.Render("RECIENTES"))
@@ -455,7 +542,11 @@ func (m Model) wideDashboard(width int) string {
 				project = "Sin proyecto"
 			}
 			text := fmt.Sprintf("  %-*s %-*s %s", nameWidth, truncate(task.Title, nameWidth), projectWidth, truncate(project, projectWidth), formatDuration(task.TotalSeconds))
-			buttons := renderButtons(entryLabels(recentActions()), m.selectedButton(focusRecent, i))
+			selectedButton := -1
+			if dashActive {
+				selectedButton = m.selectedButton(focusRecent, i)
+			}
+			buttons := renderButtons(entryLabels(recentActions()), selectedButton)
 			text = truncateToWidth(text, max(1, width-4-lipgloss.Width(buttons)-2))
 			lines = append(lines, text+"  "+buttons)
 		}

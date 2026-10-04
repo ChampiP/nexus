@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -168,7 +170,7 @@ func TestOrderedMigrationsAreIdempotentAndCreateIntegrityRules(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			for _, name := range []string{"entries_started_at_idx", "entries_project_started_idx", "entries_one_running_per_task_idx", "clients_null_org_name_idx", "countdowns_one_active_idx", "countdowns_active_idx", "wellbeing_events_at_idx"} {
+			for _, name := range []string{"entries_started_at_idx", "entries_project_started_idx", "entries_one_running_per_task_idx", "clients_null_org_name_idx", "projects_null_client_name_idx", "countdowns_one_active_idx", "countdowns_active_idx", "wellbeing_events_at_idx"} {
 				if got := count(t, db, `SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='`+name+`'`); got != 1 {
 					t.Errorf("falta índice %s", name)
 				}
@@ -213,7 +215,7 @@ func TestFreshDatabase(t *testing.T) {
 	}
 	defer db.Close()
 	applied, backup := upgrade(t, db, path)
-	if applied != 10 || backup != "" {
+	if applied != 11 || backup != "" {
 		t.Fatalf("applied = %d, backup = %q", applied, backup)
 	}
 	for file, want := range map[string]os.FileMode{filepath.Dir(path): 0o700, path: 0o600} {
@@ -227,7 +229,7 @@ func TestFreshDatabase(t *testing.T) {
 func TestLegacyDatabaseIsAdoptedWithoutLosingData(t *testing.T) {
 	db, path := legacyDB(t)
 	applied, backup := upgrade(t, db, path)
-	if applied != 10 || backup == "" {
+	if applied != 11 || backup == "" {
 		t.Fatalf("applied = %d, backup = %q", applied, backup)
 	}
 	old, err := sql.Open("sqlite", backup)
@@ -432,5 +434,293 @@ func TestBreakFlowThroughWiredAdapter(t *testing.T) {
 	}
 	if secs, _ := tracker.BreakSeconds(time.Unix(0, 0)); secs != 100 {
 		t.Fatalf("BreakSeconds = %d", secs)
+	}
+}
+
+func TestCatalogV3PreservesEntriesProjectLinksAndIDs(t *testing.T) {
+	// (a) En una base migrada a la versión previa con entradas vinculadas a proyectos,
+	// correr la nueva migración debe mantener intactos entries.project_id, ids/uids de proyectos
+	// y dejar foreign_key_check vacío.
+	// (b) Tras la migración, se permiten dos proyectos con el mismo nombre en distintos clientes,
+	// pero colisionan bajo el mismo cliente o sin cliente.
+	// (c) Segunda ejecución idempotente.
+	path := filepath.Join(t.TempDir(), "nexus_v3_test.db")
+	db, err := platformdb.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	allMigrations := orderedMigrations()
+	var prevMigrations []platformdb.Migration
+	for _, m := range allMigrations {
+		if m.Module == "catalog" && m.Version == 3 {
+			continue
+		}
+		prevMigrations = append(prevMigrations, m)
+	}
+
+	if _, _, err := platformdb.Migrate(db, path, prevMigrations, func() time.Time { return time.Unix(1_800_000_000, 0) }); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := db.Exec(`
+INSERT INTO clients(id, uid, name) VALUES (1, 'c1', 'Cliente A'), (2, 'c2', 'Cliente B');
+INSERT INTO projects(id, uid, name, client_id) VALUES (10, 'p10', 'Alpha', 1), (20, 'p20', 'Beta', NULL);
+INSERT INTO entries(id, uid, title, project, project_id, started_at, kind) VALUES 
+    (100, 'e100', 'Tarea 1', 'Alpha', 10, 1000, 'work'),
+    (200, 'e200', 'Tarea 2', 'Beta', 20, 2000, 'work');
+`); err != nil {
+		t.Fatal(err)
+	}
+
+	type entryState struct {
+		projectID sql.NullInt64
+	}
+	type projectState struct {
+		id       int64
+		uid      string
+		name     string
+		clientID sql.NullInt64
+	}
+
+	readEntries := func() map[int64]entryState {
+		m := map[int64]entryState{}
+		rows, err := db.Query(`SELECT id, project_id FROM entries`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id int64
+			var s entryState
+			if err := rows.Scan(&id, &s.projectID); err != nil {
+				t.Fatal(err)
+			}
+			m[id] = s
+		}
+		return m
+	}
+
+	readProjects := func() map[int64]projectState {
+		m := map[int64]projectState{}
+		rows, err := db.Query(`SELECT id, uid, name, client_id FROM projects`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var p projectState
+			if err := rows.Scan(&p.id, &p.uid, &p.name, &p.clientID); err != nil {
+				t.Fatal(err)
+			}
+			m[p.id] = p
+		}
+		return m
+	}
+
+	entriesBefore := readEntries()
+	projectsBefore := readProjects()
+
+	applied, _, err := platformdb.Migrate(db, path, allMigrations, func() time.Time { return time.Unix(1_800_000_100, 0) })
+	if err != nil {
+		t.Fatalf("Migrate con catalog v3: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("se esperaba 1 migración aplicada, se aplicaron %d", applied)
+	}
+
+	entriesAfter := readEntries()
+	if len(entriesAfter) != len(entriesBefore) {
+		t.Fatalf("cantidad de entradas cambió: antes %d, después %d", len(entriesBefore), len(entriesAfter))
+	}
+	for id, before := range entriesBefore {
+		after, ok := entriesAfter[id]
+		if !ok {
+			t.Fatalf("falta entrada id %d", id)
+		}
+		if before.projectID.Valid != after.projectID.Valid || before.projectID.Int64 != after.projectID.Int64 {
+			t.Fatalf("entries.project_id modificado para id %d: antes %v, después %v", id, before.projectID, after.projectID)
+		}
+	}
+
+	projectsAfter := readProjects()
+	if len(projectsAfter) != len(projectsBefore) {
+		t.Fatalf("cantidad de proyectos cambió: antes %d, después %d", len(projectsBefore), len(projectsAfter))
+	}
+	for id, before := range projectsBefore {
+		after, ok := projectsAfter[id]
+		if !ok {
+			t.Fatalf("falta proyecto id %d", id)
+		}
+		if before.id != after.id || before.uid != after.uid || before.name != after.name {
+			t.Fatalf("proyecto modificado para id %d: antes %+v, después %+v", id, before, after)
+		}
+	}
+
+	rows, err := db.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fkErrors []string
+	for rows.Next() {
+		var table, parent string
+		var rowid, fkid int64
+		_ = rows.Scan(&table, &rowid, &parent, &fkid)
+		fkErrors = append(fkErrors, fmt.Sprintf("tabla %s fila %d", table, rowid))
+	}
+	rows.Close()
+	if len(fkErrors) > 0 {
+		t.Fatalf("foreign_key_check con infracciones: %v", fkErrors)
+	}
+
+	if _, err := db.Exec(`INSERT INTO projects(uid, name, client_id) VALUES ('u1', 'Diseno de web', 1)`); err != nil {
+		t.Fatalf("error al crear 'Diseno de web' en cliente 1: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO projects(uid, name, client_id) VALUES ('u2', 'Diseno de web', 2)`); err != nil {
+		t.Fatalf("error al crear 'Diseno de web' en cliente 2: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO projects(uid, name, client_id) VALUES ('u3', 'diseno de web', 1)`); err == nil {
+		t.Fatal("se esperaba fallo de unicidad al insertar nombre duplicado en el mismo cliente")
+	}
+	if _, err := db.Exec(`INSERT INTO projects(uid, name, client_id) VALUES ('u4', 'Sin cliente x', NULL)`); err != nil {
+		t.Fatalf("error al crear primer proyecto sin cliente: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO projects(uid, name, client_id) VALUES ('u5', 'sin cliente x', NULL)`); err == nil {
+		t.Fatal("se esperaba fallo de unicidad al insertar nombre duplicado sin cliente")
+	}
+
+	appliedSecond, backupSecond, err := platformdb.Migrate(db, path, allMigrations, func() time.Time { return time.Unix(1_800_000_200, 0) })
+	if err != nil || appliedSecond != 0 || backupSecond != "" {
+		t.Fatalf("segunda ejecución no idempotente: applied=%d backup=%q err=%v", appliedSecond, backupSecond, err)
+	}
+}
+
+func TestConcurrentOrderedMigrationsOnLegacyDatabase(t *testing.T) {
+	// (e) Concurrencia: N goroutines con su propia conexión *sql.DB ejecutan Migrate
+	// sobre una copia legada -> exactamente 1 copia de seguridad, cada migración se registra una vez,
+	// enlaces de claves foráneas intactos.
+	path := filepath.Join(t.TempDir(), "legacy_concurrent.db")
+	seed, err := platformdb.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := seed.Exec(legacySchema); err != nil {
+		t.Fatal(err)
+	}
+	if err := seed.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	const workers = 8
+	start := make(chan struct{})
+	errs := make(chan error, workers)
+	var wg sync.WaitGroup
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := platformdb.Open(path)
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer conn.Close()
+			<-start
+			_, _, err = platformdb.Migrate(conn, path, orderedMigrations(), func() time.Time { return time.Unix(1_800_000_000, 0) })
+			if err != nil {
+				errs <- err
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Errorf("Migrate concurrente falló: %v", err)
+	}
+
+	verifyDB, err := platformdb.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer verifyDB.Close()
+
+	backups, err := filepath.Glob(path + ".bak-*")
+	if err != nil || len(backups) != 1 {
+		t.Fatalf("backups=%v, want exactamente 1", backups)
+	}
+
+	var migrationCount int
+	if err := verifyDB.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&migrationCount); err != nil {
+		t.Fatal(err)
+	}
+	if migrationCount != len(orderedMigrations()) {
+		t.Fatalf("migraciones en schema_migrations = %d, want %d", migrationCount, len(orderedMigrations()))
+	}
+
+	var linkedEntries int
+	if err := verifyDB.QueryRow(`SELECT COUNT(*) FROM entries WHERE project <> '' AND project_id IS NOT NULL`).Scan(&linkedEntries); err != nil {
+		t.Fatal(err)
+	}
+	var fkViolations int
+	rows, err := verifyDB.Query(`PRAGMA foreign_key_check`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		fkViolations++
+	}
+	rows.Close()
+	if fkViolations != 0 {
+		t.Fatalf("foreign_key_check tiene %d infracciones", fkViolations)
+	}
+}
+
+func TestCatalogProjectsAdapterReturnsErrAmbiguousProject(t *testing.T) {
+	// Comprueba que el adaptador catalogProjects en main.go retorna ErrAmbiguousProject
+	// cuando el nombre existe bajo más de un cliente.
+	path := filepath.Join(t.TempDir(), "nexus_ambig.db")
+	db, err := platformdb.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	if _, _, err := platformdb.Migrate(db, path, orderedMigrations(), time.Now); err != nil {
+		t.Fatal(err)
+	}
+
+	catRepo := catalog.NewSQLite(db)
+	c1, err := catRepo.CreateClient("Cliente 1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2, err := catRepo.CreateClient("Cliente 2", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := catRepo.CreateProject("SharedName", c1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catRepo.CreateProject("SharedName", c2.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	adapter := catalogProjects{catalog: catRepo}
+	_, err = adapter.EnsureProject("SharedName")
+	if !errors.Is(err, catalog.ErrAmbiguousProject) {
+		t.Fatalf("se esperaba catalog.ErrAmbiguousProject, se obtuvo %v", err)
+	}
+	if !errors.Is(err, tracking.ErrAmbiguousProject) {
+		t.Fatalf("se esperaba tracking.ErrAmbiguousProject, se obtuvo %v", err)
+	}
+
+	name, err := adapter.ProjectName(1)
+	if err != nil || name != "SharedName" {
+		t.Fatalf("ProjectName(1) = %q, %v", name, err)
 	}
 }

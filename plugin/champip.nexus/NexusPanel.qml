@@ -12,7 +12,9 @@ KeyboardPanel {
   readonly property color textColor: bar ? bar.foreground : Color.foreground
   readonly property string fontName: bar ? bar.fontFamily : Style.font.family
   property bool dropdownOpen: false
-  property string selectedProject: ""
+  property var selectedProject: null
+  property var selectedProjectId: null
+  property string selectedProjectLabel: ""
   property bool defaultProjectChosen: false
   property int focusIndex: 0
   property double nowMs: Date.now()
@@ -22,24 +24,39 @@ KeyboardPanel {
   contentHeight: fittedContentHeight(contentColumn.implicitHeight, Style.space(680))
 
   function projectOptions() {
-    var matches = Model.filterProjects(client.projects, projectSearch.text)
-    var result = []
-    if (!projectSearch.text.trim()) result.push({ name: "", label: "Sin proyecto", kind: "none" })
-    for (var i = 0; i < matches.length; i++)
-      result.push({ name: String(matches[i].name), label: String(matches[i].name), kind: "project" })
-    if (Model.canCreateProject(client.projects, projectSearch.text)) {
-      var name = projectSearch.text.trim()
-      var exact = false
-      for (var j = 0; j < matches.length; j++)
-        if (matches[j].name.toLocaleLowerCase() === name.toLocaleLowerCase()) exact = true
-      if (!exact) result.push({ name: name, label: "Crear «" + name + "»", kind: "create" })
-    }
-    return result
+    return Model.projectOptions(client.projects, projectSearch.text)
   }
 
-  function selectProject(name) {
-    selectedProject = name
+  // Asigna el proyecto seleccionado conservando el identificador, nombre y etiqueta legible.
+  function setSelectedProject(item) {
+    if (!item || item === "Sin proyecto" || (typeof item === "object" && item.kind === "none")) {
+      selectedProjectId = null
+      selectedProjectLabel = ""
+      selectedProject = null
+    } else if (typeof item === "object") {
+      selectedProjectId = item.id !== undefined && item.id !== null ? item.id : null
+      selectedProjectLabel = item.label && item.kind !== "create" ? item.label : Model.projectLabel(item)
+      selectedProject = {
+        id: selectedProjectId,
+        name: String(item.name || ""),
+        client: String(item.client || ""),
+        label: selectedProjectLabel
+      }
+    } else {
+      selectedProjectId = null
+      selectedProjectLabel = String(item || "")
+      selectedProject = {
+        id: null,
+        name: selectedProjectLabel,
+        client: "",
+        label: selectedProjectLabel
+      }
+    }
     defaultProjectChosen = true
+  }
+
+  function selectProject(item) {
+    setSelectedProject(item)
     dropdownOpen = false
     projectSearch.text = ""
     focusIndex = 1
@@ -121,8 +138,7 @@ KeyboardPanel {
       target: client
       function onProjectsChanged() {
         if (!root.defaultProjectChosen && root.client.projects.length > 0) {
-          root.selectedProject = String(root.client.projects[0].name || "")
-          root.defaultProjectChosen = true
+          root.setSelectedProject(root.client.projects[0])
         }
       }
     }
@@ -184,7 +200,7 @@ KeyboardPanel {
         Button {
           id: projectButton
           width: parent.width
-          text: root.selectedProject || "Sin proyecto"
+          text: root.selectedProjectLabel || "Sin proyecto"
           leftAlign: true
           bordered: true
           focusable: true
@@ -224,7 +240,7 @@ KeyboardPanel {
               bordered: true
               focusable: true
               foreground: root.textColor
-              onClicked: root.selectProject(modelData.name)
+              onClicked: root.selectProject(modelData)
               Keys.onPressed: function(event) {
                 if (event.key === Qt.Key_Down && index < optionRepeater.count - 1) {
                   optionRepeater.itemAt(index + 1).forceActiveFocus(); event.accepted = true

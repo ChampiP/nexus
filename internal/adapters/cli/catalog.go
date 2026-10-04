@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -23,6 +24,7 @@ type index struct {
 	orgs     []catalog.Organization
 	clients  []catalog.Client
 	projects []catalog.Project
+	tree     []catalog.TreeOrganization
 }
 
 func loadIndex(c Catalog) (*index, error) {
@@ -30,7 +32,7 @@ func loadIndex(c Catalog) (*index, error) {
 	if err != nil {
 		return nil, err
 	}
-	x := &index{}
+	x := &index{tree: tree}
 	for _, group := range tree {
 		if group.Organization != nil {
 			x.orgs = append(x.orgs, *group.Organization)
@@ -43,6 +45,115 @@ func loadIndex(c Catalog) (*index, error) {
 		}
 	}
 	return x, nil
+}
+
+// resolveProjectInput resuelve una referencia a proyecto para start/edit -p y subcomandos de project:
+// - "#12" o un número simple -> por id exacto
+// - "cliente/proyecto" (o "-/proyecto" sin cliente) -> por cliente y nombre
+// - nombre simple -> coincidencia única, error con candidatos si es ambiguo, o nuevo nombre si no existe
+func resolveProjectInput(ref string, tree []catalog.TreeOrganization) (projectID int64, projectName string, isNewBareName bool, err error) {
+	trimmed := strings.TrimSpace(ref)
+	if trimmed == "" {
+		return 0, "", false, errors.New("el proyecto no existe")
+	}
+
+	// 1. "#12" o número simple -> por id
+	var id int64
+	var isID bool
+	if strings.HasPrefix(trimmed, "#") {
+		idStr := strings.TrimSpace(strings.TrimPrefix(trimmed, "#"))
+		if n, parseErr := strconv.ParseInt(idStr, 10, 64); parseErr == nil && n > 0 {
+			id = n
+			isID = true
+		}
+	} else if n, parseErr := strconv.ParseInt(trimmed, 10, 64); parseErr == nil && n > 0 {
+		id = n
+		isID = true
+	}
+
+	if isID {
+		for _, org := range tree {
+			for _, client := range org.Clients {
+				for _, p := range client.Projects {
+					if p.ID == id {
+						return p.ID, p.Name, false, nil
+					}
+				}
+			}
+		}
+		return 0, "", false, errors.New("el proyecto no existe")
+	}
+
+	// 2. "cliente/proyecto" (insensible a mayúsculas, trimmed; "-/proyecto" = sin cliente)
+	if clientPart, projPart, ok := strings.Cut(trimmed, "/"); ok {
+		clientPart = strings.TrimSpace(clientPart)
+		projPart = strings.TrimSpace(projPart)
+		for _, org := range tree {
+			for _, client := range org.Clients {
+				if clientPart == "-" {
+					if client.Client == nil {
+						for _, p := range client.Projects {
+							if strings.EqualFold(p.Name, projPart) {
+								return p.ID, p.Name, false, nil
+							}
+						}
+					}
+				} else {
+					if client.Client != nil && strings.EqualFold(client.Client.Name, clientPart) {
+						for _, p := range client.Projects {
+							if strings.EqualFold(p.Name, projPart) {
+								return p.ID, p.Name, false, nil
+							}
+						}
+					}
+				}
+			}
+		}
+		return 0, "", false, errors.New("el proyecto no existe")
+	}
+
+	// 3. Nombre simple -> coincidencia única o error con candidatos
+	type match struct {
+		p      catalog.Project
+		client string
+	}
+	var matches []match
+	for _, org := range tree {
+		for _, client := range org.Clients {
+			cName := ""
+			if client.Client != nil {
+				cName = client.Client.Name
+			}
+			for _, p := range client.Projects {
+				if strings.EqualFold(p.Name, trimmed) {
+					matches = append(matches, match{p: p, client: cName})
+				}
+			}
+		}
+	}
+
+	if len(matches) == 1 {
+		return matches[0].p.ID, matches[0].p.Name, false, nil
+	}
+
+	if len(matches) > 1 {
+		sort.Slice(matches, func(i, j int) bool {
+			return matches[i].p.ID < matches[j].p.ID
+		})
+		cands := make([]string, 0, len(matches))
+		for _, m := range matches {
+			prefix := m.client
+			if prefix == "" {
+				prefix = "-"
+			}
+			cands = append(cands, fmt.Sprintf("#%d %s/%s", m.p.ID, prefix, m.p.Name))
+		}
+		msg := fmt.Sprintf("«%s» existe en varios clientes: %s. Usa -p \"cliente/proyecto\" o -p #id.", trimmed, strings.Join(cands, ", "))
+		return 0, "", false, &ambiguousProjectError{message: msg}
+	}
+
+	// No existe en ningún cliente: nuevo nombre simple
+	return 0, trimmed, true, nil
 }
 
 // pick resuelve una referencia: el nombre (sin distinguir mayúsculas) gana sobre el id numérico.
@@ -88,7 +199,14 @@ func (x *index) client(ref string) (catalog.Client, error) {
 	return pick(x.clients, ref, kindClient, func(c catalog.Client) string { return c.Name }, func(c catalog.Client) int64 { return c.ID })
 }
 func (x *index) project(ref string) (catalog.Project, error) {
-	return pick(x.projects, ref, kindProject, func(p catalog.Project) string { return p.Name }, func(p catalog.Project) int64 { return p.ID })
+	id, _, isNew, err := resolveProjectInput(ref, x.tree)
+	if err != nil {
+		return catalog.Project{}, err
+	}
+	if isNew {
+		return catalog.Project{}, errors.New(kindProject.missing)
+	}
+	return byID(x.projects, id, kindProject, func(p catalog.Project) int64 { return p.ID })
 }
 
 // parentID resuelve la referencia opcional a un padre; "-" o vacío significan ninguno (id 0).

@@ -49,3 +49,8 @@ type Clock func() time.Time
 type ProjectResolver interface {
 	EnsureProject(name string) (id int64, err error)
 }
+
+// ProjectNameResolver obtiene el nombre del catálogo correspondiente a un id de proyecto.
+type ProjectNameResolver interface {
+	ProjectName(id int64) (string, error)
+}

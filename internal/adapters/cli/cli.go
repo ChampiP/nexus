@@ -106,19 +106,19 @@ func run(args []string, tracker Tracker, opts Options, stdout, stderr io.Writer)
 	}
 	switch command {
 	case "start":
-		return runStart(args, tracker, stdout)
+		return runStart(args, tracker, catalog, stdout)
 	case "resume":
 		return runResume(args, tracker, stdout)
 	case "stop":
 		return runStop(args, tracker, stdout)
 	case "ls":
-		return runList(args, tracker, stdout)
+		return runList(args, tracker, catalog, opts.Now(), stdout)
 	case "projects":
 		return runProjects(args, tracker, catalog, stdout)
 	case "report":
-		return runReport(args, tracker, stdout)
+		return runReport(args, tracker, catalog, opts.Now(), stdout)
 	case "edit":
-		return runEdit(args, tracker, stdout)
+		return runEdit(args, tracker, catalog, stdout)
 	case "rm":
 		return runRemove(args, tracker, stdout)
 	case "restore":
@@ -166,7 +166,7 @@ Tareas (una tarea puede tener varias sesiones; edit, rm y restore actúan sobre 
   nexus trash [--json]                                           lista la papelera
   nexus projects [-q consulta] [--json]                          proyectos usados
 
-Catálogo (las referencias aceptan nombre o id; "-" significa ninguno):
+Catálogo (las referencias aceptan nombre, "cliente/proyecto" o #id; "-" significa ninguno):
   nexus tree [--all] [--json]                                    organización > cliente > proyecto
   nexus org add <nombre>
   nexus org rename <org> <nuevo>
@@ -182,6 +182,12 @@ Catálogo (las referencias aceptan nombre o id; "-" significa ninguno):
   nexus project unarchive <proyecto>
   nexus project merge <origen> <destino> --yes
   nexus project rm <proyecto> --yes
+
+Ejemplos de referencias a proyecto (start -p, edit -p y catálogo):
+  nexus start "Diseño" -p "acme/web"
+  nexus start "Diseño" -p #12
+  nexus project rename "acme/web" "sitio"
+  nexus project archive #12
 
 Los comandos de catálogo aceptan --json; los destructivos exigen --yes.
 `

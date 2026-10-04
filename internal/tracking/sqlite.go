@@ -152,6 +152,9 @@ func (s *SQLite) Reconcile(resolver ProjectResolver) error {
 	for _, name := range names {
 		id, err := resolver.EnsureProject(name)
 		if err != nil {
+			if errors.Is(err, ErrAmbiguousProject) {
+				continue
+			}
 			return fmt.Errorf("resolve project %q: %w", name, err)
 		}
 		if _, err := s.db.Exec(`UPDATE entries SET project_id = ? WHERE project = ? AND project_id IS NULL`, id, name); err != nil {
@@ -263,17 +266,28 @@ func (s *SQLite) Recent(limit int) ([]Entry, error) {
 
 // Totals returns project durations since the timestamp, clipped at now.
 func (s *SQLite) Totals(since, now int64) ([]ProjectTotal, error) {
-	rows, err := s.db.Query(`SELECT project, started_at, ended_at FROM entries WHERE deleted_at IS NULL AND kind = 'work' AND started_at < ?`, now)
+	rows, err := s.db.Query(`SELECT COALESCE(project_id, 0), project, started_at, ended_at FROM entries WHERE deleted_at IS NULL AND kind = 'work' AND started_at < ?`, now)
 	if err != nil {
 		return nil, fmt.Errorf("query totals: %w", err)
 	}
 	defer rows.Close()
-	cutoffTotals := make(map[string]int64)
+	type totalKey struct {
+		id   int64
+		text string
+	}
+	type totalVal struct {
+		project   string
+		projectID int64
+		seconds   int64
+		lastUsed  int64
+	}
+	cutoffTotals := make(map[totalKey]*totalVal)
 	for rows.Next() {
+		var projectID int64
 		var project string
 		var started int64
 		var ended sql.NullInt64
-		if err := rows.Scan(&project, &started, &ended); err != nil {
+		if err := rows.Scan(&projectID, &project, &started, &ended); err != nil {
 			return nil, fmt.Errorf("scan total: %w", err)
 		}
 		start := started
@@ -285,22 +299,37 @@ func (s *SQLite) Totals(since, now int64) ([]ProjectTotal, error) {
 			end = ended.Int64
 		}
 		if end > start {
-			cutoffTotals[project] += end - start
+			var key totalKey
+			if projectID > 0 {
+				key = totalKey{id: projectID}
+			} else {
+				key = totalKey{text: project}
+			}
+			val, ok := cutoffTotals[key]
+			if !ok {
+				val = &totalVal{project: project, projectID: projectID}
+				cutoffTotals[key] = val
+			}
+			if started >= val.lastUsed && project != "" {
+				val.project = project
+				val.lastUsed = started
+			}
+			val.seconds += end - start
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate totals: %w", err)
 	}
 	result := make([]ProjectTotal, 0, len(cutoffTotals))
-	for project, seconds := range cutoffTotals {
-		result = append(result, ProjectTotal{Project: project, Seconds: seconds})
+	for _, val := range cutoffTotals {
+		result = append(result, ProjectTotal{Project: val.project, ProjectID: val.projectID, Seconds: val.seconds})
 	}
 	return result, nil
 }
 
 // Projects returns per-project last-use times and accumulated durations.
 func (s *SQLite) Projects(now int64) ([]ProjectUsage, error) {
-	rows, err := s.db.Query(`SELECT project, MAX(started_at), SUM(MAX(0, MIN(COALESCE(ended_at, ?), ?) - started_at)) FROM entries WHERE deleted_at IS NULL AND kind = 'work' AND project <> '' AND started_at <= ? GROUP BY project`, now, now, now)
+	rows, err := s.db.Query(`SELECT COALESCE(project_id, 0), project, MAX(started_at), SUM(MAX(0, MIN(COALESCE(ended_at, ?), ?) - started_at)) FROM entries WHERE deleted_at IS NULL AND kind = 'work' AND (project_id IS NOT NULL OR project <> '') AND started_at <= ? GROUP BY CASE WHEN project_id IS NOT NULL THEN project_id ELSE 0 END, CASE WHEN project_id IS NULL THEN project ELSE '' END`, now, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("query projects: %w", err)
 	}
@@ -308,7 +337,7 @@ func (s *SQLite) Projects(now int64) ([]ProjectUsage, error) {
 	var projects []ProjectUsage
 	for rows.Next() {
 		var project ProjectUsage
-		if err := rows.Scan(&project.Name, &project.LastUsed, &project.Seconds); err != nil {
+		if err := rows.Scan(&project.ProjectID, &project.Name, &project.LastUsed, &project.Seconds); err != nil {
 			return nil, fmt.Errorf("scan project: %w", err)
 		}
 		projects = append(projects, project)

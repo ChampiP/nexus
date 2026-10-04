@@ -59,5 +59,46 @@ assert.strictEqual(nextErr.todaySeconds, 120)
 assert.strictEqual(nextErr.stale, true)
 assert.strictEqual(nextErr.error, "no se pudo leer la base de datos")
 
+// Dos proyectos con el mismo nombre y clientes distintos se listan con etiqueta de cliente y no se colapsan.
+const duplicateProjects = [
+  { id: 7, name: "Diseno de web", client: "Acme", last_used: 100 },
+  { id: 8, name: "Diseno de web", client: "Beta", last_used: 200 }
+]
+
+assert.strictEqual(Model.projectLabel(duplicateProjects[0]), "Diseno de web · Acme")
+assert.strictEqual(Model.projectLabel(duplicateProjects[1]), "Diseno de web · Beta")
+assert.strictEqual(Model.projectLabel({ id: 9, name: "Diseno de web", client: "" }), "Diseno de web")
+
+const options = Model.projectOptions(duplicateProjects, "")
+assert.strictEqual(options.length, 3) // "Sin proyecto" + 2 proyectos
+const opt7 = options.find(function(o) { return o.id === 7 })
+const opt8 = options.find(function(o) { return o.id === 8 })
+assert.ok(opt7, "debe incluir la opción con id 7")
+assert.ok(opt8, "debe incluir la opción con id 8")
+assert.strictEqual(opt7.label, "Diseno de web · Acme")
+assert.strictEqual(opt8.label, "Diseno de web · Beta")
+
+// Filtrado por cliente y por nombre sin colapsar duplicados.
+const filteredBeta = Model.filterProjects(duplicateProjects, "Beta")
+assert.strictEqual(filteredBeta.length, 1)
+assert.strictEqual(filteredBeta[0].id, 8)
+assert.strictEqual(filteredBeta[0].client, "Beta")
+
+const filteredAcme = Model.filterProjects(duplicateProjects, "Acme")
+assert.strictEqual(filteredAcme.length, 1)
+assert.strictEqual(filteredAcme[0].id, 7)
+
+const filteredBoth = Model.filterProjects(duplicateProjects, "Diseno")
+assert.strictEqual(filteredBoth.length, 2)
+
+// Constructor de argv: devuelve ["-p", "#7"] para proyecto existente y el nombre simple para uno nuevo.
+assert.deepStrictEqual(Model.projectArgv({ id: 7, name: "Diseno de web" }), ["-p", "#7"])
+assert.deepStrictEqual(Model.projectArgv({ id: "#7", name: "Diseno de web" }), ["-p", "#7"])
+assert.deepStrictEqual(Model.projectArgv({ name: "Diseno de web" }), ["-p", "Diseno de web"])
+assert.deepStrictEqual(Model.projectArgv("Diseno de web"), ["-p", "Diseno de web"])
+assert.deepStrictEqual(Model.projectArgv(null), [])
+assert.deepStrictEqual(Model.projectArgv(""), [])
+assert.deepStrictEqual(Model.projectArgv({ name: "" }), [])
+
 console.log("Model.js ok")
 

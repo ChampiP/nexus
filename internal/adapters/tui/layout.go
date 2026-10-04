@@ -141,7 +141,7 @@ func (m Model) computeLayout() screenLayout {
 // fillDashboard ubica las filas visibles de recientes y la barra de estado bajo el panel.
 // El panel mide: borde, título, totales, línea en blanco, encabezado RECIENTES, filas y borde.
 func (l *screenLayout) fillDashboard(m Model, width int) {
-	totalsLines := max(1, len(m.totals))
+	totalsLines := max(1, len(m.projectBars()))
 	l.recentY = l.dashboardY + 4 + totalsLines
 	count := len(m.recent)
 	if m.height > 0 {

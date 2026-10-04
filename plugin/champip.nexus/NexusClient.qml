@@ -21,13 +21,12 @@ Item {
     if (!statusProc.running) statusProc.running = true
   }
 
+  // Inicia un nuevo temporizador construyendo el argv mediante Model.startArgv.
   function start(title, project, description) {
-    var args = ["nexus", "start", String(title)]
-    if (project) args.push("-p", String(project))
-    if (description) args.push("-d", String(description))
-    args.push("--json")
+    var args = Model.startArgv(title, project, description)
     runAction(args, "start")
   }
+
 
   function stop(id) { runAction(["nexus", "stop", String(id), "--json"], "stop") }
   function stopAll() { runAction(["nexus", "stop", "--all", "--json"], "stopAll") }

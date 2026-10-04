@@ -12,6 +12,7 @@ import (
 
 // Option es un proyecto elegible junto con su cliente y su uso.
 type Option struct {
+	ID           int64
 	Name         string
 	Client       string
 	ClientID     int64
@@ -59,21 +60,37 @@ func (o Option) Label() string {
 // que solo existen como texto en las tareas, filtrados por query en la jerarquía.
 // Orden: usados recientemente primero; luego los nunca usados por nombre.
 func Build(tree []catalog.TreeOrganization, usage []tracking.ProjectUsage, query string) []Option {
-	used := make(map[string]tracking.ProjectUsage, len(usage))
+	usedByID := make(map[int64]tracking.ProjectUsage)
+	usedByName := make(map[string]tracking.ProjectUsage)
 	for _, u := range usage {
-		used[strings.ToLower(u.Name)] = u
+		if u.ProjectID > 0 {
+			usedByID[u.ProjectID] = u
+		} else {
+			usedByName[strings.ToLower(u.Name)] = u
+		}
 	}
-	seen := map[string]bool{}
+	seenID := make(map[int64]bool)
+	seenName := make(map[string]bool)
 	var options []Option
 	for _, group := range tree {
 		for _, client := range group.Clients {
 			for _, project := range client.Projects {
-				key := strings.ToLower(project.Name)
-				seen[key] = true
+				seenID[project.ID] = true
+				seenName[strings.ToLower(project.Name)] = true
 				if project.ArchivedAt != nil {
 					continue
 				}
-				option := Option{Name: project.Name, LastUsed: used[key].LastUsed, Seconds: used[key].Seconds}
+				option := Option{
+					ID:   project.ID,
+					Name: project.Name,
+				}
+				if u, ok := usedByID[project.ID]; ok {
+					option.LastUsed = u.LastUsed
+					option.Seconds = u.Seconds
+				} else if u, ok := usedByName[strings.ToLower(project.Name)]; ok {
+					option.LastUsed = u.LastUsed
+					option.Seconds = u.Seconds
+				}
 				if client.Client != nil {
 					option.Client = client.Client.Name
 					option.ClientID = client.Client.ID
@@ -86,8 +103,14 @@ func Build(tree []catalog.TreeOrganization, usage []tracking.ProjectUsage, query
 		}
 	}
 	for _, u := range usage {
-		if !seen[strings.ToLower(u.Name)] && strings.TrimSpace(u.Name) != "" {
-			options = append(options, Option{Name: u.Name, LastUsed: u.LastUsed, Seconds: u.Seconds})
+		if u.ProjectID > 0 {
+			if !seenID[u.ProjectID] && strings.TrimSpace(u.Name) != "" {
+				options = append(options, Option{ID: u.ProjectID, Name: u.Name, LastUsed: u.LastUsed, Seconds: u.Seconds})
+			}
+		} else {
+			if !seenName[strings.ToLower(u.Name)] && strings.TrimSpace(u.Name) != "" {
+				options = append(options, Option{Name: u.Name, LastUsed: u.LastUsed, Seconds: u.Seconds})
+			}
 		}
 	}
 	query = strings.ToLower(strings.TrimSpace(query))
@@ -102,7 +125,10 @@ func Build(tree []catalog.TreeOrganization, usage []tracking.ProjectUsage, query
 		if a.LastUsed != b.LastUsed {
 			return a.LastUsed > b.LastUsed
 		}
-		return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+		if !strings.EqualFold(a.Name, b.Name) {
+			return strings.ToLower(a.Name) < strings.ToLower(b.Name)
+		}
+		return a.ID < b.ID
 	})
 	return filtered
 }

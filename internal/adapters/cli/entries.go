@@ -16,10 +16,11 @@ import (
 	"nexus/internal/tracking"
 )
 
-func runStart(args []string, tracker Tracker, stdout io.Writer) error {
+func runStart(args []string, tracker Tracker, cat Catalog, stdout io.Writer) error {
 	var input tracking.StartInput
 	jsonMode := contains(args, "--json")
 	var titles []string
+	var projectRef string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--json":
@@ -30,7 +31,7 @@ func runStart(args []string, tracker Tracker, stdout io.Writer) error {
 			}
 			i++
 			if args[i-1] == "-p" || args[i-1] == "--project" {
-				input.Project = args[i]
+				projectRef = args[i]
 			} else {
 				input.Description = args[i]
 			}
@@ -45,6 +46,26 @@ func runStart(args []string, tracker Tracker, stdout io.Writer) error {
 		return commandError(fmt.Errorf("uso: nexus start <título> [-p proyecto] [-d descripción]"), jsonMode, stdout)
 	}
 	input.Title = titles[0]
+	if projectRef != "" {
+		if cat != nil {
+			tree, err := cat.Tree()
+			if err != nil {
+				return commandError(err, jsonMode, stdout)
+			}
+			id, name, isNew, err := resolveProjectInput(projectRef, tree)
+			if err != nil {
+				return commandError(err, jsonMode, stdout)
+			}
+			if isNew {
+				input.Project = name
+			} else {
+				input.ProjectID = id
+				input.Project = name
+			}
+		} else {
+			input.Project = projectRef
+		}
+	}
 	entry, err := tracker.Start(input)
 	if err != nil {
 		return commandError(err, jsonMode, stdout)
@@ -198,7 +219,47 @@ func runStatus(args []string, tracker Tracker, opts Options, stdout io.Writer) e
 	return err
 }
 
-func runList(args []string, tracker Tracker, stdout io.Writer) error {
+// projectDisplayNames calcula los nombres a mostrar para proyectos según si su nombre está duplicado entre clientes.
+func projectDisplayNames(tree []catalog.TreeOrganization) (map[int64]string, map[string]string) {
+	nameCount := make(map[string]int)
+	for _, org := range tree {
+		for _, client := range org.Clients {
+			for _, p := range client.Projects {
+				nameCount[strings.ToLower(p.Name)]++
+			}
+		}
+	}
+	byID := make(map[int64]string)
+	byName := make(map[string]string)
+	for _, org := range tree {
+		for _, client := range org.Clients {
+			cName := ""
+			if client.Client != nil {
+				cName = client.Client.Name
+			}
+			for _, p := range client.Projects {
+				if nameCount[strings.ToLower(p.Name)] > 1 {
+					display := "-/" + p.Name
+					if cName != "" {
+						display = cName + "/" + p.Name
+					}
+					byID[p.ID] = display
+					if cName == "" {
+						byName[strings.ToLower(p.Name)] = display
+					}
+				} else {
+					byID[p.ID] = p.Name
+					if cName == "" {
+						byName[strings.ToLower(p.Name)] = p.Name
+					}
+				}
+			}
+		}
+	}
+	return byID, byName
+}
+
+func runList(args []string, tracker Tracker, cat Catalog, now time.Time, stdout io.Writer) error {
 	jsonMode := contains(args, "--json")
 	if len(args) > 0 && (!jsonMode || len(args) != 1) {
 		return fmt.Errorf("uso: nexus ls [--json]")
@@ -207,24 +268,50 @@ func runList(args []string, tracker Tracker, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	now := time.Now()
 	tasks, err := tracker.RecentTasks(trashLimit)
 	if err != nil {
 		return err
 	}
+	var byID map[int64]string
+	var byName map[string]string
+	if cat != nil {
+		if tree, err := cat.Tree(); err == nil {
+			byID, byName = projectDisplayNames(tree)
+		}
+	}
+	dispProject := func(projectID int64, rawProject string) string {
+		if byID != nil && projectID > 0 {
+			if disp, ok := byID[projectID]; ok {
+				return disp
+			}
+		}
+		if byName != nil && rawProject != "" {
+			if disp, ok := byName[strings.ToLower(rawProject)]; ok {
+				return disp
+			}
+		}
+		return rawProject
+	}
 	output := listOutput{Running: make([]statusEntry, 0, len(running)), Recent: make([]recentEntry, 0, len(recent)), Tasks: make([]taskOutput, 0, len(tasks))}
 	for _, task := range tasks {
-		output.Tasks = append(output.Tasks, taskOutput{task.TaskUID, task.Title, task.Project, task.Description, task.TotalSeconds, task.Running, task.RunningEntryID, task.LastEntryID, task.LastActivity, task.SessionCount})
+		proj := dispProject(task.ProjectID, task.Project)
+		output.Tasks = append(output.Tasks, taskOutput{task.TaskUID, task.Title, proj, task.Description, task.TotalSeconds, task.Running, task.RunningEntryID, task.LastEntryID, task.LastActivity, task.SessionCount})
 	}
 	for _, entry := range running {
-		output.Running = append(output.Running, presentStatus(entry, now))
+		status := presentStatus(entry, now)
+		status.Project = dispProject(entry.ProjectID, entry.Project)
+		output.Running = append(output.Running, status)
 	}
 	for _, entry := range recent {
 		seconds := now.Unix() - entry.StartedAt
 		if entry.EndedAt != nil {
 			seconds = *entry.EndedAt - entry.StartedAt
 		}
-		output.Recent = append(output.Recent, recentEntry{entry.ID, entry.Title, recentProject(entry), entry.StartedAt, entry.EndedAt, seconds, entry.UID, entry.Description, entry.TaskUID})
+		proj := recentProject(entry)
+		if proj != "☕ Break" {
+			proj = dispProject(entry.ProjectID, entry.Project)
+		}
+		output.Recent = append(output.Recent, recentEntry{entry.ID, entry.Title, proj, entry.StartedAt, entry.EndedAt, seconds, entry.UID, entry.Description, entry.TaskUID})
 	}
 	if jsonMode {
 		return json.NewEncoder(stdout).Encode(output)
@@ -270,19 +357,23 @@ func runProjects(args []string, tracker Tracker, cat Catalog, stdout io.Writer) 
 	if *jsonMode {
 		out := make([]projectOutput, 0, len(projects))
 		for _, project := range projects {
-			out = append(out, projectOutput{project.Name, project.LastUsed, project.Seconds, project.Client, project.Organization})
+			out = append(out, projectOutput{project.ID, project.Name, project.LastUsed, project.Seconds, project.Client, project.Organization})
 		}
 		return json.NewEncoder(stdout).Encode(out)
 	}
 	for _, project := range projects {
-		if _, err := fmt.Fprintln(stdout, project.Name); err != nil {
+		line := project.Name
+		if project.Client != "" {
+			line = project.Client + "/" + project.Name
+		}
+		if _, err := fmt.Fprintln(stdout, line); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func runReport(args []string, tracker Tracker, stdout io.Writer) error {
+func runReport(args []string, tracker Tracker, cat Catalog, now time.Time, stdout io.Writer) error {
 	fs := flag.NewFlagSet("report", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	week := fs.Bool("week", false, "last seven days")
@@ -292,7 +383,6 @@ func runReport(args []string, tracker Tracker, stdout io.Writer) error {
 	if fs.NArg() != 0 {
 		return fmt.Errorf("uso: nexus report [--week]")
 	}
-	now := time.Now()
 	since := dayStart(now)
 	if *week {
 		since = since.AddDate(0, 0, -6)
@@ -305,8 +395,24 @@ func runReport(args []string, tracker Tracker, stdout io.Writer) error {
 		_, err = fmt.Fprintln(stdout, "Sin tiempo registrado")
 		return err
 	}
+	var byID map[int64]string
+	var byName map[string]string
+	if cat != nil {
+		if tree, err := cat.Tree(); err == nil {
+			byID, byName = projectDisplayNames(tree)
+		}
+	}
 	for _, total := range totals {
 		name := total.Project
+		if byID != nil && total.ProjectID > 0 {
+			if disp, ok := byID[total.ProjectID]; ok {
+				name = disp
+			}
+		} else if byName != nil && total.Project != "" {
+			if disp, ok := byName[strings.ToLower(total.Project)]; ok {
+				name = disp
+			}
+		}
 		if name == "" {
 			name = "Sin proyecto"
 		}
@@ -344,7 +450,7 @@ func parseArgs(args []string, valueFlags, boolFlags map[string]string) (parsedAr
 			parsed.values[name] = args[i]
 		} else if name, ok := boolFlags[arg]; ok {
 			parsed.flags[name] = true
-		} else if strings.HasPrefix(arg, "-") && arg != "-" {
+		} else if strings.HasPrefix(arg, "-") && arg != "-" && !strings.HasPrefix(arg, "-/") {
 			return parsed, fmt.Errorf("opción desconocida %q", arg)
 		} else {
 			parsed.positional = append(parsed.positional, arg)
@@ -361,7 +467,7 @@ func parseID(value string) (int64, error) {
 	return id, nil
 }
 
-func runEdit(args []string, tracker Tracker, stdout io.Writer) error {
+func runEdit(args []string, tracker Tracker, cat Catalog, stdout io.Writer) error {
 	jsonMode := contains(args, "--json")
 	parsed, err := parseArgs(args, editValueFlags, jsonFlags)
 	const usage = "uso: nexus edit <id> [-t título] [-p proyecto] [-d descripción] [--json]"
@@ -380,7 +486,29 @@ func runEdit(args []string, tracker Tracker, stdout io.Writer) error {
 		input.Title = &v
 	}
 	if v, ok := parsed.values["project"]; ok {
-		input.Project = &v
+		if v == "" {
+			empty := ""
+			var zeroID int64
+			input.Project = &empty
+			input.ProjectID = &zeroID
+		} else if cat != nil {
+			tree, err := cat.Tree()
+			if err != nil {
+				return commandError(localize(err), jsonMode, stdout)
+			}
+			projID, projName, isNew, err := resolveProjectInput(v, tree)
+			if err != nil {
+				return commandError(localize(err), jsonMode, stdout)
+			}
+			if isNew {
+				input.Project = &projName
+			} else {
+				input.ProjectID = &projID
+				input.Project = &projName
+			}
+		} else {
+			input.Project = &v
+		}
 	}
 	if v, ok := parsed.values["description"]; ok {
 		input.Description = &v

@@ -12,6 +12,7 @@ import (
 )
 
 type projectOption struct {
+	id         int64
 	name       string
 	client     string
 	clientID   int64
@@ -34,8 +35,14 @@ func (m *Model) initInputs() {
 	// El proyecto inicial es el último usado (no archivado), no uno del catálogo sin tareas.
 	used := m.tracker.Projects("")
 	for _, project := range m.pickerProjects("") {
-		if slices.ContainsFunc(used, func(u tracking.ProjectUsage) bool { return strings.EqualFold(u.Name, project.Name) }) {
+		if slices.ContainsFunc(used, func(u tracking.ProjectUsage) bool {
+			if project.ID > 0 && u.ProjectID > 0 {
+				return u.ProjectID == project.ID
+			}
+			return strings.EqualFold(u.Name, project.Name)
+		}) {
 			m.selectedProject = project.Name
+			m.selectedProjectID = project.ID
 			m.inputs[1].SetValue(m.selectedProject)
 			break
 		}
@@ -62,7 +69,13 @@ func (m Model) projectOptions() []projectOption {
 			continue
 		}
 		project := group.Option
-		options = append(options, projectOption{name: project.Name, client: project.Client, clientID: project.ClientID, seconds: project.Seconds, current: strings.EqualFold(project.Name, m.selectedProject), selectable: true})
+		current := false
+		if m.selectedProjectID > 0 {
+			current = project.ID == m.selectedProjectID
+		} else if m.selectedProject != "" {
+			current = project.ID == 0 && strings.EqualFold(project.Name, m.selectedProject)
+		}
+		options = append(options, projectOption{id: project.ID, name: project.Name, client: project.Client, clientID: project.ClientID, seconds: project.Seconds, current: current, selectable: true})
 		if project.ClientID != 0 {
 			clients[project.ClientID] = project.Client
 		}
@@ -71,7 +84,7 @@ func (m Model) projectOptions() []projectOption {
 		}
 	}
 	if query == "" {
-		options = append([]projectOption{{name: "Sin proyecto", selectable: true, current: m.selectedProject == ""}}, options...)
+		options = append([]projectOption{{name: "Sin proyecto", selectable: true, current: m.selectedProjectID == 0 && m.selectedProject == ""}}, options...)
 	} else if !exact {
 		if m.catalog != nil {
 			for _, organization := range m.tree {
@@ -132,11 +145,24 @@ func (m *Model) keepProjectAndReturnToTitle() {
 	m.syncInputFocus()
 }
 
+// advanceFocusAfterProjectSelection pasa el foco tras seleccionar un proyecto:
+// en el panel de edición avanza al siguiente campo (Descripción);
+// en nueva tarea avanza a Descripción si está vacía, o a [Iniciar] si ya tiene contenido.
+func (m *Model) advanceFocusAfterProjectSelection() {
+	if m.edit != nil {
+		m.focus = focusDescription
+	} else if strings.TrimSpace(m.inputs[2].Value()) == "" {
+		m.focus = focusDescription
+	} else {
+		m.focus = focusStart
+	}
+}
+
 func (m *Model) selectProject() {
 	options := m.projectOptions()
 	if len(options) == 0 {
 		m.closeProjectPicker()
-		m.focus = focusTitle
+		m.advanceFocusAfterProjectSelection()
 		m.syncInputFocus()
 		return
 	}
@@ -151,21 +177,29 @@ func (m *Model) selectProject() {
 		return
 	}
 	if option.create && m.catalog != nil {
-		if _, err := m.catalog.CreateProject(option.name, option.clientID); err != nil {
+		created, err := m.catalog.CreateProject(option.name, option.clientID)
+		if err != nil {
 			m.setMessage(errorText("No se pudo crear el proyecto", err))
 			return
 		}
 		m.loadCatalog()
-	}
-	if option.name == "Sin proyecto" {
+		if created.Name != "" {
+			m.selectedProject = created.Name
+		} else {
+			m.selectedProject = option.name
+		}
+		m.selectedProjectID = created.ID
+	} else if option.name == "Sin proyecto" {
 		m.selectedProject = ""
+		m.selectedProjectID = 0
 	} else {
 		m.selectedProject = option.name
+		m.selectedProjectID = option.id
 	}
 	m.inputs[1].SetValue(m.selectedProject)
 	m.pickerOpen = false
 	m.inputs[1].Placeholder = "Buscar o escribir un proyecto"
-	m.focus = focusTitle
+	m.advanceFocusAfterProjectSelection()
 	m.syncInputFocus()
 }
 
@@ -216,8 +250,11 @@ func renderProjectOption(option projectOption, selected bool) string {
 }
 
 func (m Model) selectedProjectPath() string {
+	if m.selectedProjectID <= 0 {
+		return m.selectedProject
+	}
 	for _, project := range m.pickerProjects("") {
-		if strings.EqualFold(project.Name, m.selectedProject) {
+		if project.ID == m.selectedProjectID {
 			parts := make([]string, 0, 3)
 			if project.Organization != "" {
 				parts = append(parts, project.Organization)
@@ -230,4 +267,29 @@ func (m Model) selectedProjectPath() string {
 		}
 	}
 	return m.selectedProject
+}
+
+// projectClientName busca el nombre del cliente para un id de proyecto dentro del catálogo.
+func (m Model) projectClientName(projectID int64) string {
+	if projectID <= 0 {
+		return ""
+	}
+	for _, g := range m.tree {
+		for _, c := range g.Clients {
+			for _, p := range c.Projects {
+				if p.ID == projectID {
+					if c.Client != nil {
+						return c.Client.Name
+					}
+					return ""
+				}
+			}
+		}
+	}
+	for _, p := range m.pickerProjects("") {
+		if p.ID == projectID {
+			return p.Client
+		}
+	}
+	return ""
 }

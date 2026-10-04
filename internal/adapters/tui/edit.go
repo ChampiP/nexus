@@ -10,6 +10,7 @@ import (
 // formDraft guarda el formulario principal mientras el panel de edición reutiliza sus campos.
 type formDraft struct {
 	title, description, project string
+	projectID                   int64
 	focus                       focusTarget
 }
 
@@ -25,9 +26,10 @@ func (m *Model) openEdit(task tracking.TaskSummary) {
 	if m.edit != nil {
 		return
 	}
-	entry := tracking.Entry{ID: task.LastEntryID, TaskUID: task.TaskUID, Title: task.Title, Project: task.Project, Description: task.Description}
-	m.edit = &editState{entry: entry, draft: formDraft{m.inputs[0].Value(), m.inputs[2].Value(), m.selectedProject, m.focus}}
+	entry := tracking.Entry{ID: task.LastEntryID, TaskUID: task.TaskUID, Title: task.Title, Project: task.Project, ProjectID: task.ProjectID, Description: task.Description}
+	m.edit = &editState{entry: entry, draft: formDraft{m.inputs[0].Value(), m.inputs[2].Value(), m.selectedProject, m.selectedProjectID, m.focus}}
 	m.selectedProject = entry.Project
+	m.selectedProjectID = entry.ProjectID
 	m.inputs[0].SetValue(entry.Title)
 	m.inputs[1].SetValue(entry.Project)
 	m.inputs[2].SetValue(entry.Description)
@@ -46,6 +48,7 @@ func (m *Model) closeEdit() {
 	m.inputs[0].SetValue(draft.title)
 	m.inputs[2].SetValue(draft.description)
 	m.selectedProject = draft.project
+	m.selectedProjectID = draft.projectID
 	m.inputs[1].SetValue(draft.project)
 	m.focus = draft.focus
 	m.syncInputFocus()
@@ -62,9 +65,11 @@ func (m *Model) saveEdit() {
 	if title := m.inputs[0].Value(); strings.TrimSpace(title) != entry.Title {
 		input.Title = &title
 	}
-	if m.selectedProject != entry.Project {
+	if m.selectedProject != entry.Project || m.selectedProjectID != entry.ProjectID {
 		project := m.selectedProject
+		projectID := m.selectedProjectID
 		input.Project = &project
+		input.ProjectID = &projectID
 	}
 	if description := strings.TrimSpace(m.inputs[2].Value()); description != entry.Description {
 		input.Description = &description

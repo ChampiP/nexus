@@ -81,9 +81,13 @@ func (f *fakeCatalog) id() int64 { f.next++; return f.next }
 func (f *fakeCatalog) log(format string, args ...any) {
 	f.calls = append(f.calls, fmt.Sprintf(format, args...))
 }
-func (f *fakeCatalog) taken(name string) bool {
+func (f *fakeCatalog) takenInClient(name string, clientID *int64, excludeID int64) bool {
 	for _, p := range f.projects {
-		if strings.EqualFold(p.Name, name) {
+		if p.ID == excludeID {
+			continue
+		}
+		sameClient := (clientID == nil && p.ClientID == nil) || (clientID != nil && p.ClientID != nil && *clientID == *p.ClientID)
+		if sameClient && strings.EqualFold(p.Name, name) {
 			return true
 		}
 	}
@@ -133,7 +137,14 @@ func (f *fakeCatalog) CreateProject(name string, clientID int64) (catalog.Projec
 }
 func (f *fakeCatalog) RenameProject(id int64, name string) error {
 	f.log("RenameProject %d %s", id, name)
-	if f.taken(name) {
+	var clientID *int64
+	for _, p := range f.projects {
+		if p.ID == id {
+			clientID = p.ClientID
+			break
+		}
+	}
+	if f.takenInClient(name, clientID, id) {
 		return catalog.ErrDuplicateName
 	}
 	for i := range f.projects {
@@ -145,14 +156,24 @@ func (f *fakeCatalog) RenameProject(id int64, name string) error {
 }
 func (f *fakeCatalog) MoveProject(projectID, clientID int64) error {
 	f.log("MoveProject %d %d", projectID, clientID)
+	var proj *catalog.Project
 	for i := range f.projects {
 		if f.projects[i].ID == projectID {
-			f.projects[i].ClientID = nil
-			if clientID != 0 {
-				f.projects[i].ClientID = &clientID
-			}
+			proj = &f.projects[i]
+			break
 		}
 	}
+	if proj == nil {
+		return catalog.ErrNotFound
+	}
+	var targetClientID *int64
+	if clientID != 0 {
+		targetClientID = &clientID
+	}
+	if f.takenInClient(proj.Name, targetClientID, projectID) {
+		return catalog.ErrDuplicateName
+	}
+	proj.ClientID = targetClientID
 	return nil
 }
 func (f *fakeCatalog) setArchived(id int64, at *int64) {

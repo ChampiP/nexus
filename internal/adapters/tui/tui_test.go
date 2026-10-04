@@ -12,13 +12,14 @@ import (
 )
 
 type testStore struct {
-	started  []tracking.Entry
-	stopped  []int64
-	running  []tracking.Entry
-	projects []tracking.ProjectUsage
-	recent   []tracking.Entry
-	trash    []tracking.Entry
-	edits    []editCall
+	started     []tracking.Entry
+	startInputs []tracking.StartInput
+	stopped     []int64
+	running     []tracking.Entry
+	projects    []tracking.ProjectUsage
+	recent      []tracking.Entry
+	trash       []tracking.Entry
+	edits       []editCall
 	// deleted y restored son las tareas (task_uid) eliminadas y restauradas.
 	deleted  []string
 	restored []string
@@ -120,6 +121,9 @@ func (s *testStore) EditTask(task string, input tracking.EditInput) (tracking.En
 			if input.Project != nil {
 				(*list)[i].Project = *input.Project
 			}
+			if input.ProjectID != nil {
+				(*list)[i].ProjectID = *input.ProjectID
+			}
 			if input.Description != nil {
 				(*list)[i].Description = *input.Description
 			}
@@ -169,7 +173,8 @@ func (s *testStore) RestoreTask(task string) error {
 }
 
 func (s *testStore) Start(input tracking.StartInput) (tracking.Entry, error) {
-	entry := tracking.Entry{ID: int64(len(s.started) + 1), Title: input.Title, Project: input.Project, Description: input.Description}
+	s.startInputs = append(s.startInputs, input)
+	entry := tracking.Entry{ID: int64(len(s.started) + 1), Title: input.Title, Project: input.Project, ProjectID: input.ProjectID, Description: input.Description}
 	s.started = append(s.started, entry)
 	s.running = append(s.running, entry)
 	return entry, nil
@@ -314,7 +319,7 @@ func TestProjectFocusShowsAllProjectsAndMarksCurrent(t *testing.T) {
 		t.Fatalf("selected project option lacks visible markers: %q", label)
 	}
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.inputs[1].Value() != "nexus" || m.focus != focusTitle {
+	if m.inputs[1].Value() != "nexus" || m.focus != focusDescription {
 		t.Fatalf("empty-query Enter changed project or focus: project=%q focus=%v", m.inputs[1].Value(), m.focus)
 	}
 }
@@ -381,7 +386,7 @@ func TestProjectTypingReplacesPrefillAndStartUsesSelection(t *testing.T) {
 		t.Fatalf("existing match should be highlighted and create last: index=%d options=%#v", m.pickerIndex, options)
 	}
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if got := m.inputs[1].Value(); got != "tbwa" || m.focus != focusTitle {
+	if got := m.inputs[1].Value(); got != "tbwa" || m.focus != focusDescription {
 		t.Fatalf("selected project=%q focus=%v", got, m.focus)
 	}
 	m.inputs[0].SetValue("Capture")
@@ -400,10 +405,10 @@ func TestProjectPickerEscEnterAndMouseTransitions(t *testing.T) {
 		t.Fatalf("Enter should open and highlight current project: open=%v index=%d", m.pickerOpen, m.pickerIndex)
 	}
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.pickerOpen || m.focus != focusTitle || m.selectedProject != "nexus" {
+	if m.pickerOpen || m.focus != focusDescription || m.selectedProject != "nexus" {
 		t.Fatalf("Enter selection state: open=%v focus=%v project=%q", m.pickerOpen, m.focus, m.selectedProject)
 	}
-	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyTab})
+	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyShiftTab})
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("tb")})
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyEsc})
@@ -473,7 +478,7 @@ func TestProjectPickerFiltersSelectsAndCreates(t *testing.T) {
 		t.Fatalf("filtered options = %#v", got)
 	}
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.inputs[1].Value() != "Studio" || m.focus != focusTitle {
+	if m.inputs[1].Value() != "Studio" || m.focus != focusDescription {
 		t.Fatalf("selected project=%q focus=%v", m.inputs[1].Value(), m.focus)
 	}
 	m.focus = focusProject
@@ -481,7 +486,7 @@ func TestProjectPickerFiltersSelectsAndCreates(t *testing.T) {
 	m.pickerOpen = true
 	m.pickerIndex = len(m.projectOptions()) - 1
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
-	if m.inputs[1].Value() != "New project" || m.focus != focusTitle {
+	if m.inputs[1].Value() != "New project" || m.focus != focusDescription {
 		t.Fatalf("create selection project=%q focus=%v", m.inputs[1].Value(), m.focus)
 	}
 }

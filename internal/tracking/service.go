@@ -12,6 +12,7 @@ import (
 type StartInput struct {
 	Title       string
 	Project     string
+	ProjectID   int64
 	Description string
 	Kind        string // "" equivale a "work"
 }
@@ -50,9 +51,66 @@ func (t *Tracker) resolve(name string) (int64, error) {
 	}
 	id, err := t.projects.EnsureProject(name)
 	if err != nil {
+		if errors.Is(err, ErrAmbiguousProject) {
+			return 0, ErrAmbiguousProject
+		}
 		return 0, fmt.Errorf("resolve project %q: %w", name, err)
 	}
 	return id, nil
+}
+
+// resolveProjectName obtiene el nombre del catálogo para un id; retorna cadena vacía si no hay resolver disponible.
+func (t *Tracker) resolveProjectName(id int64) (string, error) {
+	if id <= 0 || t.projects == nil {
+		return "", nil
+	}
+	if pnr, ok := t.projects.(interface{ ProjectName(int64) (string, error) }); ok {
+		name, err := pnr.ProjectName(id)
+		if err != nil {
+			return "", fmt.Errorf("resolve project name #%d: %w", id, err)
+		}
+		return name, nil
+	}
+	return "", nil
+}
+
+// resolveProjectAssignment determina el nombre de texto y el id del proyecto según los campos provistos.
+func (t *Tracker) resolveProjectAssignment(currentText string, currentID int64, inProject *string, inProjectID *int64) (string, int64, error) {
+	if inProjectID != nil {
+		id := *inProjectID
+		if id > 0 {
+			name, err := t.resolveProjectName(id)
+			if err != nil {
+				return "", 0, err
+			}
+			if name != "" {
+				return name, id, nil
+			}
+			if inProject != nil {
+				return *inProject, id, nil
+			}
+			return currentText, id, nil
+		}
+		if inProject != nil {
+			return *inProject, 0, nil
+		}
+		return "", 0, nil
+	}
+	if inProject != nil {
+		text := *inProject
+		if text == "" {
+			return "", 0, nil
+		}
+		id, err := t.resolve(text)
+		if err != nil {
+			if errors.Is(err, ErrAmbiguousProject) {
+				return "", 0, ErrAmbiguousProject
+			}
+			return "", 0, err
+		}
+		return text, id, nil
+	}
+	return currentText, currentID, nil
 }
 
 // Start creates a timer after trimming and validating its title.
@@ -68,11 +126,38 @@ func (t *Tracker) Start(input StartInput) (Entry, error) {
 	default:
 		return Entry{}, ErrInvalidKind
 	}
-	projectID, err := t.resolve(input.Project)
-	if err != nil {
-		return Entry{}, fmt.Errorf("start timer: %w", err)
+	var projectID int64
+	var projectName string
+	if input.ProjectID > 0 {
+		projectID = input.ProjectID
+		name, err := t.resolveProjectName(projectID)
+		if err != nil {
+			return Entry{}, fmt.Errorf("start timer: %w", err)
+		}
+		if name != "" {
+			projectName = name
+		} else {
+			projectName = input.Project
+		}
+	} else if input.Project != "" {
+		id, err := t.resolve(input.Project)
+		if err != nil {
+			if errors.Is(err, ErrAmbiguousProject) {
+				return Entry{}, ErrAmbiguousProject
+			}
+			return Entry{}, fmt.Errorf("start timer: %w", err)
+		}
+		projectID = id
+		projectName = input.Project
 	}
-	entry, err := t.repository.Insert(Entry{Kind: input.Kind, Title: input.Title, Project: input.Project, ProjectID: projectID, Description: input.Description, StartedAt: t.clock().Unix()})
+	entry, err := t.repository.Insert(Entry{
+		Kind:        input.Kind,
+		Title:       input.Title,
+		Project:     projectName,
+		ProjectID:   projectID,
+		Description: input.Description,
+		StartedAt:   t.clock().Unix(),
+	})
 	if err != nil {
 		return Entry{}, fmt.Errorf("start timer: %w", err)
 	}
@@ -154,6 +239,7 @@ func (t *Tracker) StopMany(ids []int64) error {
 type EditInput struct {
 	Title       *string
 	Project     *string
+	ProjectID   *int64
 	Description *string
 }
 
@@ -173,12 +259,15 @@ func (t *Tracker) Edit(id int64, in EditInput) (Entry, error) {
 	if in.Description != nil {
 		entry.Description = *in.Description
 	}
-	if in.Project != nil {
-		entry.Project = *in.Project
-		if entry.ProjectID, err = t.resolve(entry.Project); err != nil {
-			return Entry{}, fmt.Errorf("edit entry #%d: %w", id, err)
+	newProject, newProjectID, err := t.resolveProjectAssignment(entry.Project, entry.ProjectID, in.Project, in.ProjectID)
+	if err != nil {
+		if errors.Is(err, ErrAmbiguousProject) {
+			return Entry{}, ErrAmbiguousProject
 		}
+		return Entry{}, fmt.Errorf("edit entry #%d: %w", id, err)
 	}
+	entry.Project = newProject
+	entry.ProjectID = newProjectID
 	if err := t.repository.Update(entry); err != nil {
 		return Entry{}, fmt.Errorf("edit entry #%d: %w", id, err)
 	}
@@ -388,12 +477,15 @@ func (t *Tracker) EditTask(taskUID string, in EditInput) (Entry, error) {
 	if in.Description != nil {
 		latest.Description = *in.Description
 	}
-	if in.Project != nil {
-		latest.Project = *in.Project
-		if latest.ProjectID, err = t.resolve(latest.Project); err != nil {
-			return Entry{}, fmt.Errorf("edit task: %w", err)
+	newProject, newProjectID, err := t.resolveProjectAssignment(latest.Project, latest.ProjectID, in.Project, in.ProjectID)
+	if err != nil {
+		if errors.Is(err, ErrAmbiguousProject) {
+			return Entry{}, ErrAmbiguousProject
 		}
+		return Entry{}, fmt.Errorf("edit task: %w", err)
 	}
+	latest.Project = newProject
+	latest.ProjectID = newProjectID
 	if err := t.repository.UpdateTask(taskUID, latest); err != nil {
 		return Entry{}, fmt.Errorf("edit task: %w", err)
 	}

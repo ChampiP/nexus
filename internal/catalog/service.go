@@ -118,10 +118,11 @@ func (s *Service) RenameProject(id int64, name string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := s.repo.Project(id); err != nil {
+	proj, err := s.repo.Project(id)
+	if err != nil {
 		return err
 	}
-	if s.repo.ProjectNameTaken(name, id) {
+	if s.repo.ProjectNameTaken(name, derefID(proj.ClientID), id) {
 		return ErrDuplicateName
 	}
 	if err := s.entries.RenameProject(id, name); err != nil {
@@ -130,8 +131,20 @@ func (s *Service) RenameProject(id int64, name string) error {
 	return s.repo.exec(`UPDATE projects SET name = ? WHERE id = ?`, name, id)
 }
 
-// MoveProject moves a project to a client; clientID 0 means no client.
+// MoveProject mueve un proyecto a un cliente; clientID 0 significa sin cliente.
 func (s *Service) MoveProject(projectID, clientID int64) error {
+	proj, err := s.repo.Project(projectID)
+	if err != nil {
+		return err
+	}
+	if clientID != 0 {
+		if _, err := s.repo.Client(clientID); err != nil {
+			return err
+		}
+	}
+	if s.repo.ProjectNameTaken(proj.Name, clientID, projectID) {
+		return ErrDuplicateName
+	}
 	return s.repo.exec(`UPDATE projects SET client_id = NULLIF(?, 0) WHERE id = ?`, clientID, projectID)
 }
 
@@ -177,6 +190,9 @@ func (s *Service) MergeProjects(fromID, intoID int64) error {
 // Tree returns organizations > clients > projects, including the groups without organization
 // and without client, ordered by name.
 func (s *Service) Tree() ([]TreeOrganization, error) { return s.repo.Tree() }
+
+// ProjectsNamed devuelve todos los proyectos con ese nombre (ignorando mayúsculas/minúsculas) en todos los clientes.
+func (s *Service) ProjectsNamed(name string) ([]Project, error) { return s.repo.ProjectsNamed(name) }
 
 func derefID(id *int64) int64 {
 	if id == nil {

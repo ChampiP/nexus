@@ -97,11 +97,16 @@ function filterProjects(projects, query) {
     if (recent) return recent
     var aName = String(a.name || "").toLowerCase()
     var bName = String(b.name || "").toLowerCase()
-    return aName < bName ? -1 : (aName > bName ? 1 : 0)
+    if (aName !== bName) return aName < bName ? -1 : 1
+    var aClient = String(a.client || "").toLowerCase()
+    var bClient = String(b.client || "").toLowerCase()
+    return aClient < bClient ? -1 : (aClient > bClient ? 1 : 0)
   })
   if (!needle) return list
   return list.filter(function(project) {
-    return String(project.name || "").toLocaleLowerCase().indexOf(needle) >= 0
+    var nameMatch = String((project && project.name) || "").toLocaleLowerCase().indexOf(needle) >= 0
+    var clientMatch = String((project && project.client) || "").toLocaleLowerCase().indexOf(needle) >= 0
+    return nameMatch || clientMatch
   })
 }
 
@@ -115,9 +120,96 @@ function canCreateProject(projects, query) {
   return true
 }
 
-if (typeof module !== "undefined") {
-  module.exports = { formatDuration: formatDuration, formatClock: formatClock,
-    formatHMS: formatHMS, liveTodaySeconds: liveTodaySeconds, barLabel: barLabel,
-    barTooltip: barTooltip, tooltipText: barTooltip, applyStatus: applyStatus,
-    filterProjects: filterProjects, canCreateProject: canCreateProject }
+// Etiqueta legible de un proyecto: si tiene cliente asociado muestra "proyecto · cliente", de lo contrario solo el nombre.
+function projectLabel(project) {
+  if (!project) return ""
+  var name = String(project.name || "").trim()
+  var client = String(project.client || "").trim()
+  return client ? name + " · " + client : name
 }
+
+// Construye las opciones para el selector de proyectos, incluyendo etiqueta con cliente, id y opción de creación.
+function projectOptions(projects, query) {
+  var text = String(query || "").trim()
+  var matches = filterProjects(projects, text)
+  var result = []
+  if (!text) {
+    result.push({ id: null, name: "", client: "", label: "Sin proyecto", kind: "none" })
+  }
+  for (var i = 0; i < matches.length; i++) {
+    var p = matches[i]
+    result.push({
+      id: p.id !== undefined && p.id !== null ? p.id : null,
+      name: String(p.name || ""),
+      client: String(p.client || ""),
+      label: projectLabel(p),
+      kind: "project"
+    })
+  }
+  if (canCreateProject(projects, text)) {
+    var exact = false
+    for (var j = 0; j < matches.length; j++) {
+      if (String(matches[j].name || "").toLocaleLowerCase() === text.toLocaleLowerCase()) {
+        exact = true
+        break
+      }
+    }
+    if (!exact) {
+      result.push({ id: null, name: text, client: "", label: "Crear «" + text + "»", kind: "create" })
+    }
+  }
+  return result
+}
+
+// Genera los argumentos de línea de comandos para el proyecto seleccionado.
+// Si tiene id asignado utiliza "#<id>"; si es nuevo o sin id, utiliza el nombre simple.
+function projectArgv(project) {
+  if (!project) return []
+  if (typeof project === "number") {
+    return ["-p", "#" + project]
+  }
+  if (typeof project === "string") {
+    var trimmed = project.trim()
+    if (!trimmed) return []
+    return ["-p", trimmed]
+  }
+  if (project.id !== undefined && project.id !== null && String(project.id).trim() !== "") {
+    var idStr = String(project.id).trim()
+    return ["-p", idStr.indexOf("#") === 0 ? idStr : "#" + idStr]
+  }
+  var name = String(project.name || "").trim()
+  if (!name) return []
+  return ["-p", name]
+}
+
+// Construye los argumentos completos para "nexus start".
+function startArgv(title, project, description) {
+  var args = ["nexus", "start", String(title || "")]
+  var p = projectArgv(project)
+  for (var i = 0; i < p.length; i++) args.push(p[i])
+  if (description) args.push("-d", String(description))
+  args.push("--json")
+  return args
+}
+
+if (typeof module !== "undefined") {
+  module.exports = {
+    formatDuration: formatDuration,
+    formatClock: formatClock,
+    formatHMS: formatHMS,
+    liveTodaySeconds: liveTodaySeconds,
+    barLabel: barLabel,
+    barTooltip: barTooltip,
+    tooltipText: barTooltip,
+    applyStatus: applyStatus,
+    filterProjects: filterProjects,
+    canCreateProject: canCreateProject,
+    projectLabel: projectLabel,
+    projectOptions: projectOptions,
+    buildProjectOptions: projectOptions,
+    projectArgv: projectArgv,
+    buildProjectArgs: projectArgv,
+    startArgv: startArgv
+  }
+}
+

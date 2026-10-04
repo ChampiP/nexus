@@ -59,8 +59,9 @@ func (m Model) activeCard() []string {
 	if len(m.bp.resume) > 0 {
 		resume = "Al volver se reanudan: " + strings.Join(m.bp.resume, ", ")
 	}
+	breakActive := m.screen == screenBreak || (m.width >= 120 && m.wideColumn == 2)
 	selected := -1
-	if !m.bp.onTabs {
+	if breakActive && !m.bp.onTabs {
 		selected = m.bp.action
 	}
 	return []string{
@@ -79,8 +80,9 @@ func clockTime(unix int64) string { return time.Unix(unix, 0).Format("15:04") }
 // startForm son las líneas del formulario para empezar un break.
 func (m Model) startForm(width int, l breakLayout) []string {
 	f := m.bp.form
+	breakActive := m.screen == screenBreak || (m.width >= 120 && m.wideColumn == 2)
 	mark := func(row int) string {
-		if !m.bp.onTabs && f.row == row {
+		if breakActive && !m.bp.onTabs && f.row == row {
 			return "▸ "
 		}
 		return "  "
@@ -90,7 +92,7 @@ func (m Model) startForm(width int, l breakLayout) []string {
 		selected = -1
 	}
 	durationFocus := -1
-	if !m.bp.onTabs && f.row == breakRowDuration {
+	if breakActive && !m.bp.onTabs && f.row == breakRowDuration {
 		durationFocus = f.choice
 	}
 	lines := []string{
@@ -117,7 +119,7 @@ func (m Model) startForm(width int, l breakLayout) []string {
 		lines = append(lines, mark(breakRowFirst+i)+fmt.Sprintf("%s %s · %s", box, truncate(timer.Title, titleWidth), truncate(project, projectWidth)))
 	}
 	button := -1
-	if !m.bp.onTabs && f.row == f.buttonsRow() {
+	if breakActive && !m.bp.onTabs && f.row == f.buttonsRow() {
 		button = 0
 	}
 	return append(lines, renderButtons(breakStartLabels, button))
@@ -172,15 +174,16 @@ func (m Model) activePauseLines() []string {
 	if cfg.Enabled {
 		enabled = 0
 	}
-	focusRow := func(row int) bool { return !m.bp.onTabs && m.bp.settingsRow == row }
+	breakActive := m.screen == screenBreak || (m.width >= 120 && m.wideColumn == 2)
+	focusRow := func(row int) bool { return breakActive && !m.bp.onTabs && m.bp.settingsRow == row }
 	focusedCol := func(row int) int {
-		if !m.bp.onTabs && m.bp.settingsRow == row {
+		if breakActive && !m.bp.onTabs && m.bp.settingsRow == row {
 			return m.bp.action
 		}
 		return -1
 	}
 	focusOption := func(row, col int) bool {
-		return !m.bp.onTabs && m.bp.settingsRow == row && m.bp.action == col
+		return breakActive && !m.bp.onTabs && m.bp.settingsRow == row && m.bp.action == col
 	}
 	statusLine := status + fmt.Sprintf(" · Hoy: %d hechas · %d saltada%s", counters.Done, counters.Skipped, pluralSuffix(counters.Skipped))
 	if geometry, wide := m.wideGeometry(); wide {
@@ -189,6 +192,10 @@ func (m Model) activePauseLines() []string {
 	lines := []string{
 		titleStyle.Render("PAUSAS ACTIVAS"),
 		statusLine,
+	}
+	pauseBtn := -1
+	if breakActive {
+		pauseBtn = pauseSelected(m.bp)
 	}
 	if _, wide := m.wideGeometry(); wide {
 		lines = append(lines, pauseRowPrefix("Activar", focusRow(0)))
@@ -201,14 +208,14 @@ func (m Model) activePauseLines() []string {
 		for i, option := range []string{"10 s", "15 s", "20 s", "30 s", "1 min", "2 min", "5 min"} {
 			lines = append(lines, RenderOption(option, pauseDurationIndex(cfg.Duration) == i, focusOption(2, i)))
 		}
-		lines = append(lines, renderButtons(pauseButtonLabels(m.pauseStatus, m.now), pauseSelected(m.bp)))
+		lines = append(lines, renderButtons(pauseButtonLabels(m.pauseStatus, m.now), pauseBtn))
 		return lines
 	}
 	return append(lines,
 		pauseRowPrefix("Activar", focusRow(0))+"     "+RenderOptions([]string{"Sí", "No"}, enabled, focusedCol(0)),
 		pauseRowPrefix("Cada", focusRow(1))+RenderOptions([]string{"10 min", "20 min", "30 min", "45 min", "60 min"}, pauseEveryIndex(cfg.Every), focusedCol(1)),
 		pauseRowPrefix("Dura", focusRow(2))+RenderOptions([]string{"10 s", "15 s", "20 s", "30 s", "1 min", "2 min", "5 min"}, pauseDurationIndex(cfg.Duration), focusedCol(2)),
-		renderButtons(pauseButtonLabels(m.pauseStatus, m.now), pauseSelected(m.bp)),
+		renderButtons(pauseButtonLabels(m.pauseStatus, m.now), pauseBtn),
 	)
 }
 

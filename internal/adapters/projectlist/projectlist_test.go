@@ -108,3 +108,78 @@ func TestBuildGroupsOrdersAndRetainsHeadersForHierarchySearch(t *testing.T) {
 		t.Fatalf("grupos sin asignar = %+v", groups)
 	}
 }
+
+func TestBuildAndBuildGroupsSameNamedProjectsDifferentClients(t *testing.T) {
+	// Comprueba que dos proyectos con el mismo nombre bajo distintos clientes se reconocen
+	// como opciones independientes con sus respectivos identificadores, clientes y totales de segundos.
+	c1 := catalog.Client{ID: 10, Name: "Cliente 1"}
+	c2 := catalog.Client{ID: 20, Name: "Cliente 2"}
+	tree := []catalog.TreeOrganization{
+		{
+			Clients: []catalog.TreeClient{
+				{
+					Client: &c1,
+					Projects: []catalog.Project{
+						{ID: 100, Name: "Diseno de web", ClientID: ptr(10)},
+					},
+				},
+				{
+					Client: &c2,
+					Projects: []catalog.Project{
+						{ID: 200, Name: "Diseno de web", ClientID: ptr(20)},
+					},
+				},
+			},
+		},
+	}
+
+	usage := []tracking.ProjectUsage{
+		{ProjectID: 100, Name: "Diseno de web", Seconds: 1500, LastUsed: 200},
+		{ProjectID: 200, Name: "Diseno de web", Seconds: 3500, LastUsed: 300},
+	}
+
+	options := Build(tree, usage, "")
+	if len(options) != 2 {
+		t.Fatalf("Build esperaba 2 opciones, obtuvo %d: %#v", len(options), options)
+	}
+
+	byID := map[int64]Option{}
+	for _, opt := range options {
+		byID[opt.ID] = opt
+	}
+
+	opt1, ok1 := byID[100]
+	if !ok1 || opt1.Client != "Cliente 1" || opt1.Seconds != 1500 || opt1.LastUsed != 200 {
+		t.Fatalf("opción 100 incorrecta: %+v", opt1)
+	}
+
+	opt2, ok2 := byID[200]
+	if !ok2 || opt2.Client != "Cliente 2" || opt2.Seconds != 3500 || opt2.LastUsed != 300 {
+		t.Fatalf("opción 200 incorrecta: %+v", opt2)
+	}
+
+	if options[0].ID != 200 || options[1].ID != 100 {
+		t.Fatalf("Build orden esperado por LastUsed (200 primero, luego 100), obtuvo: %+v, %+v", options[0], options[1])
+	}
+
+	groups := BuildGroups(tree, usage, "")
+	var projectGroups []Group
+	for _, g := range groups {
+		if g.Kind == ProjectGroup {
+			projectGroups = append(projectGroups, g)
+		}
+	}
+	if len(projectGroups) != 2 {
+		t.Fatalf("BuildGroups esperaba 2 opciones de proyecto, obtuvo %d", len(projectGroups))
+	}
+	groupsByID := map[int64]Option{}
+	for _, pg := range projectGroups {
+		groupsByID[pg.Option.ID] = pg.Option
+	}
+	if g100 := groupsByID[100]; g100.Client != "Cliente 1" || g100.Seconds != 1500 {
+		t.Fatalf("grupo id 100 incorrecto: %+v", g100)
+	}
+	if g200 := groupsByID[200]; g200.Client != "Cliente 2" || g200.Seconds != 3500 {
+		t.Fatalf("grupo id 200 incorrecto: %+v", g200)
+	}
+}

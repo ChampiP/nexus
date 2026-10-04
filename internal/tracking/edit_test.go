@@ -1,6 +1,7 @@
 package tracking
 
 import (
+	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -10,12 +11,24 @@ import (
 type nameResolver struct{ ids map[string]int64 }
 
 func (r *nameResolver) EnsureProject(name string) (int64, error) {
+	if name == "Ambiguo" {
+		return 0, ErrAmbiguousProject
+	}
 	if id, ok := r.ids[name]; ok {
 		return id, nil
 	}
 	id := int64(len(r.ids) + 1)
 	r.ids[name] = id
 	return id, nil
+}
+
+func (r *nameResolver) ProjectName(id int64) (string, error) {
+	for name, pid := range r.ids {
+		if pid == id {
+			return name, nil
+		}
+	}
+	return "", ErrNotFound
 }
 
 // newEditTracker returns a Tracker over a temp database whose clock is controlled through *now.
@@ -293,5 +306,77 @@ func TestRestoreLateOrStoppedEntryStaysStopped(t *testing.T) {
 	_ = tracker.Restore(stopped.ID)
 	if running, _, _, _ := tracker.Snapshot(); len(running) != 0 {
 		t.Fatalf("running = %+v, quiero ninguna", running)
+	}
+}
+
+func TestStartWithProjectIDSetsIDAndText(t *testing.T) {
+	// Comprueba que iniciar con ProjectID asigna tanto project_id como el nombre de texto resuelto.
+	now := int64(100)
+	tracker, repo := newEditTracker(t, &now)
+	entry, err := tracker.Start(StartInput{Title: "tarea con id", ProjectID: 1})
+	if err != nil {
+		t.Fatalf("Start con ProjectID: %v", err)
+	}
+	if entry.ProjectID != 1 {
+		t.Fatalf("entry.ProjectID = %d, quería 1", entry.ProjectID)
+	}
+	if entry.Project != "Alpha" {
+		t.Fatalf("entry.Project = %q, quería 'Alpha'", entry.Project)
+	}
+	var storedText string
+	var storedID sql.NullInt64
+	if err := repo.db.QueryRow(`SELECT project, project_id FROM entries WHERE id = ?`, entry.ID).Scan(&storedText, &storedID); err != nil {
+		t.Fatal(err)
+	}
+	if !storedID.Valid || storedID.Int64 != 1 || storedText != "Alpha" {
+		t.Fatalf("almacenado = text %q, id %v", storedText, storedID)
+	}
+}
+
+func TestStartWithAmbiguousNameReturnsErrAmbiguousProject(t *testing.T) {
+	// Comprueba que resolver un nombre ambiguo retorna ErrAmbiguousProject y no inserta la entrada.
+	now := int64(100)
+	tracker, repo := newEditTracker(t, &now)
+	_, err := tracker.Start(StartInput{Title: "tarea ambigua", Project: "Ambiguo"})
+	if !errors.Is(err, ErrAmbiguousProject) {
+		t.Fatalf("se esperaba ErrAmbiguousProject, se obtuvo %v", err)
+	}
+	var count int
+	if err := repo.db.QueryRow(`SELECT COUNT(*) FROM entries WHERE title = 'tarea ambigua'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("se insertaron %d filas con nombre ambiguo; no debía insertarse ninguna", count)
+	}
+}
+
+func TestEditAndEditTaskWithProjectID(t *testing.T) {
+	// Comprueba que Edit y EditTask con ProjectID actualizan correctamente project_id y el nombre resuelto.
+	now := int64(100)
+	tracker, _ := newEditTracker(t, &now)
+	entry, err := tracker.Start(StartInput{Title: "tarea base", Project: "Alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.ProjectID != 1 {
+		t.Fatalf("ProjectID inicial = %d, quería 1", entry.ProjectID)
+	}
+
+	pid2 := int64(2)
+	edited, err := tracker.Edit(entry.ID, EditInput{ProjectID: &pid2})
+	if err != nil {
+		t.Fatalf("Edit con ProjectID: %v", err)
+	}
+	if edited.ProjectID != 2 || edited.Project != "Beta" {
+		t.Fatalf("edited = id %d, project %q; quería id 2, project 'Beta'", edited.ProjectID, edited.Project)
+	}
+
+	pid1 := int64(1)
+	taskEdited, err := tracker.EditTask(entry.TaskUID, EditInput{ProjectID: &pid1})
+	if err != nil {
+		t.Fatalf("EditTask con ProjectID: %v", err)
+	}
+	if taskEdited.ProjectID != 1 || taskEdited.Project != "Alpha" {
+		t.Fatalf("taskEdited = id %d, project %q; quería id 1, project 'Alpha'", taskEdited.ProjectID, taskEdited.Project)
 	}
 }

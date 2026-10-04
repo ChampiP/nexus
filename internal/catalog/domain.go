@@ -38,6 +38,8 @@ var (
 	ErrNotFound = errors.New("not found")
 	// ErrMergeSelf indicates an attempt to merge a project into itself.
 	ErrMergeSelf = errors.New("cannot merge a project into itself")
+	// ErrAmbiguousProject indica que existen varios proyectos con el mismo nombre en diferentes clientes.
+	ErrAmbiguousProject = errors.New("ambiguous project name")
 )
 
 // TreeOrganization is an organization with its clients; a nil Organization groups clients (and
