@@ -62,8 +62,10 @@ func RunWithCatalog(args []string, tracker Tracker, catalog Catalog, stdout, std
 
 // Options agrupa las dependencias opcionales de la línea de comandos.
 type Options struct {
-	Catalog Catalog
-	Breaks  Breaks
+	Catalog   Catalog
+	Breaks    Breaks
+	Wellbeing Wellbeing
+	Presenter PresenterBridge
 	// Now es el reloj de la CLI; nulo usa time.Now.
 	Now func() time.Time
 }
@@ -91,6 +93,8 @@ func run(args []string, tracker Tracker, opts Options, stdout, stderr io.Writer)
 		return runStatus(args, tracker, opts, stdout)
 	case "break":
 		return runBreak(args, tracker, opts, stdout)
+	case "pausa":
+		return runWellbeing(args, opts.Wellbeing, opts.Presenter, opts.Now(), stdout)
 	case "org", "client", "project", "tree":
 		if catalog == nil {
 			return fmt.Errorf("el catálogo no está disponible")
@@ -146,8 +150,14 @@ Break:
   nexus break extend [minutos]                                   extiende el break (10 min por defecto)
   nexus break end [--resume|--no-resume] [--json]                termina el break y retoma los temporizadores
 
+Pausas activas:
+  nexus pausa [estado] [--json]                                  muestra la configuración
+  nexus pausa --cada 30 --dura 30s                              configura los avisos
+  nexus pausa activar|desactivar|no-molestar [minutos]|reanudar
+  nexus pausa ahora|hecho|posponer|saltar
+
 Servicio:
-  nexus daemon                                                   avisa cuando un break vence (lo inicia systemd)
+  nexus daemon                                                   avisa cuando vence un break o toca moverse (lo inicia systemd)
 
 Tareas (una tarea puede tener varias sesiones; edit, rm y restore actúan sobre la sesión indicada):
   nexus edit <id> [-t título] [-p proyecto] [-d descripción] [--json]

@@ -6,6 +6,7 @@ import (
 	"nexus/internal/catalog"
 	"nexus/internal/countdown"
 	"nexus/internal/tracking"
+	"nexus/internal/wellbeing"
 )
 
 // localize translates domain sentinel errors into user-facing Spanish; the domain keeps neutral text.
@@ -23,6 +24,8 @@ func localize(err error) error {
 		return errors.New("No hay un break activo")
 	case errors.Is(err, countdown.ErrInvalidDuration):
 		return errors.New("La duración debe estar entre 1 minuto y 8 horas")
+	case errors.Is(err, wellbeing.ErrInvalidSetting):
+		return errors.New("configuración de pausa activa no válida")
 	case errors.Is(err, catalog.ErrEmptyName):
 		return errors.New("el nombre no puede estar vacío")
 	case errors.Is(err, catalog.ErrMergeSelf):

@@ -19,7 +19,9 @@ import (
 	"nexus/internal/countdown"
 	platformdb "nexus/internal/platform/db"
 	"nexus/internal/platform/notify"
+	"nexus/internal/platform/presence"
 	"nexus/internal/tracking"
+	"nexus/internal/wellbeing"
 )
 
 func main() {
@@ -37,7 +39,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	tracker, catalogService, breaks, closeDB, err := openApp(path)
+	tracker, catalogService, breaks, activePauses, closeDB, err := openApp(path)
 	if err != nil {
 		if len(args) > 0 && args[0] == "status" && hasJSONFlag(args[1:]) {
 			return cli.Run(args, nil, os.Stdout, os.Stderr)
@@ -46,16 +48,16 @@ func run(args []string) error {
 	}
 	defer closeDB()
 	if len(args) == 1 && args[0] == "daemon" {
-		return runDaemon(breaks)
+		return runDaemon(breaks, activePauses)
 	}
 	if len(args) == 0 {
 		return tui.Run(tracker, catalogService, breaks)
 	}
-	return cli.RunWithOptions(args, tracker, cli.Options{Catalog: catalogService, Breaks: breaks}, os.Stdout, os.Stderr)
+	return cli.RunWithOptions(args, tracker, cli.Options{Catalog: catalogService, Breaks: breaks, Wellbeing: activePauses, Presenter: wellbeingPresenter{}}, os.Stdout, os.Stderr)
 }
 
 // runDaemon corre el bucle de avisos hasta recibir SIGINT o SIGTERM; solo permite una instancia.
-func runDaemon(breaks *countdown.Service) error {
+func runDaemon(breaks *countdown.Service, activePauses *wellbeing.Service) error {
 	release, err := daemon.Lock(daemon.LockPath())
 	if err != nil {
 		return err
@@ -63,7 +65,7 @@ func runDaemon(breaks *countdown.Service) error {
 	defer release()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	daemon.Run(ctx, breaks, notifier{}, openNexus, time.Now, daemonTick)
+	daemon.RunWithWellbeing(ctx, breaks, notifier{}, openNexus, activePauses, wellbeingPresenter{}, presence.New(nil), time.Now, daemonTick)
 	return nil
 }
 
@@ -80,10 +82,10 @@ func (notifier) Send(ctx context.Context, n notify.Notification) (string, error)
 }
 
 // openApp abre y migra la base de datos en path y construye los casos de uso de seguimiento, catálogo y break.
-func openApp(path string) (*tracking.Tracker, *catalog.Service, *countdown.Service, func() error, error) {
+func openApp(path string) (*tracking.Tracker, *catalog.Service, *countdown.Service, *wellbeing.Service, func() error, error) {
 	db, err := platformdb.Open(path)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	_, backup, err := migrateAndReconcile(db, path, time.Now)
 	if backup != "" {
@@ -91,13 +93,14 @@ func openApp(path string) (*tracking.Tracker, *catalog.Service, *countdown.Servi
 	}
 	if err != nil {
 		db.Close()
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
 	tracker, catalogService, breaks := wire(db, time.Now)
+	activePauses := wellbeing.NewService(wellbeing.NewSQLite(db), wellWork{tracker: tracker, breaks: breaks}, time.Now)
 	if _, err := tracker.Purge(trashRetention); err != nil {
 		fmt.Fprintln(os.Stderr, "nexus: no se pudo purgar la papelera:", err)
 	}
-	return tracker, catalogService, breaks, db.Close, nil
+	return tracker, catalogService, breaks, activePauses, db.Close, nil
 }
 
 // trashRetention is how long soft-deleted entries stay restorable.
@@ -110,6 +113,25 @@ func wire(db *sql.DB, now func() time.Time) (*tracking.Tracker, *catalog.Service
 	breaks := countdown.NewService(countdown.NewSQLite(db), trackerTimers{tracker}, now)
 	return tracker, catalog.NewService(catalogRepo, trackerEntries{tracker}, now), breaks
 }
+
+type wellWork struct {
+	tracker *tracking.Tracker
+	breaks  *countdown.Service
+}
+
+func (w wellWork) WorkRunning() (bool, error) {
+	entries, _, _, err := w.tracker.Snapshot()
+	if err != nil {
+		return false, err
+	}
+	for _, e := range entries {
+		if e.Kind == tracking.KindWork {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+func (w wellWork) BreakActive() (bool, error) { b, err := w.breaks.Active(); return b != nil, err }
 
 // trackerTimers adapts tracking to the port countdown uses to control timers.
 type trackerTimers struct{ tracker *tracking.Tracker }
@@ -160,6 +182,7 @@ func migrateAndReconcile(db *sql.DB, path string, now func() time.Time) (int, st
 	migrations := append([]platformdb.Migration{trackingSteps[0]}, catalog.Migrations()...)
 	migrations = append(migrations, trackingSteps[1:]...)
 	migrations = append(migrations, countdown.Migrations()...)
+	migrations = append(migrations, wellbeing.Migrations()...)
 	applied, backup, err := platformdb.Migrate(db, path, migrations, now)
 	if err != nil {
 		return applied, backup, err

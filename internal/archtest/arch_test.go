@@ -16,6 +16,8 @@ const (
 	tracking  = "nexus/internal/tracking"
 	catalog   = "nexus/internal/catalog"
 	countdown = "nexus/internal/countdown"
+	wellbeing = "nexus/internal/wellbeing"
+	presence  = "nexus/internal/platform/presence"
 	platform  = "nexus/internal/platform"
 	adapters  = "nexus/internal/adapters"
 	cliPkg    = "nexus/internal/adapters/cli"
@@ -73,8 +75,12 @@ func TestModuleBoundaries(t *testing.T) {
 				t.Errorf("%s solo puede importar tracking y catalog, no %s", p.ImportPath, imp)
 			case within(imp, projectListPkg) && p.ImportPath != cliPkg && p.ImportPath != tuiPkg && p.ImportPath != projectListPkg && !strings.HasPrefix(p.ImportPath, "nexus/cmd/") && !strings.HasSuffix(p.ImportPath, "projectlist.test"):
 				t.Errorf("%s no debe importar %s", p.ImportPath, imp)
-			case p.ImportPath == daemonPkg && strings.HasPrefix(imp, "nexus/") && !within(imp, countdown) && imp != notifyPkg:
-				t.Errorf("%s solo puede importar countdown y platform/notify, no %s", p.ImportPath, imp)
+			case within(p.ImportPath, wellbeing) && strings.HasPrefix(imp, "nexus/") && imp != "nexus/internal/platform/db":
+				t.Errorf("%s no debe importar módulos ni adaptadores, no %s", p.ImportPath, imp)
+			case p.ImportPath == presence && strings.HasPrefix(imp, "nexus/"):
+				t.Errorf("%s no debe importar paquetes internos, no %s", p.ImportPath, imp)
+			case p.ImportPath == daemonPkg && strings.HasPrefix(imp, "nexus/") && !within(imp, countdown) && !within(imp, wellbeing) && !within(imp, presence) && imp != notifyPkg:
+				t.Errorf("%s no puede importar %s", p.ImportPath, imp)
 			case p.ImportPath == notifyPkg && strings.HasPrefix(imp, "nexus/"):
 				t.Errorf("%s no debe importar paquetes internos, no %s", p.ImportPath, imp)
 			case within(imp, daemonPkg) && !strings.HasPrefix(p.ImportPath, "nexus/cmd/") && p.ImportPath != daemonPkg && !strings.HasSuffix(p.ImportPath, "daemon.test"):
@@ -88,7 +94,7 @@ func TestModuleBoundaries(t *testing.T) {
 
 func TestDomainImportsOnlyStandardLibrary(t *testing.T) {
 	for _, p := range listPackages(t) {
-		if p.ImportPath != tracking {
+		if p.ImportPath != tracking && p.ImportPath != wellbeing {
 			continue
 		}
 		file, err := parser.ParseFile(token.NewFileSet(), filepath.Join(p.Dir, "domain.go"), nil, parser.ImportsOnly)

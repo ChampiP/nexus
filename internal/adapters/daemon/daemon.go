@@ -11,6 +11,7 @@ import (
 
 	"nexus/internal/countdown"
 	"nexus/internal/platform/notify"
+	"nexus/internal/wellbeing"
 )
 
 // extendBy es lo que suma la acción "+10 min".
@@ -35,6 +36,11 @@ type Opener func() error
 // Run revisa cada tick si hay un break vencido que avisar, hasta que ctx se cancele.
 // Solo hay una notificación pendiente a la vez; los errores se registran y no detienen el bucle.
 func Run(ctx context.Context, breaks Breaks, notifier Notifier, open Opener, clock func() time.Time, tick time.Duration) {
+	RunWithWellbeing(ctx, breaks, notifier, open, nil, nil, nil, clock, tick)
+}
+
+// RunWithWellbeing revisa breaks y pausas activas en el mismo tick.
+func RunWithWellbeing(ctx context.Context, breaks Breaks, notifier Notifier, open Opener, service Wellbeing, presenter Presenter, busy BusyChecker, clock func() time.Time, tick time.Duration) {
 	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
 
@@ -44,8 +50,40 @@ func Run(ctx context.Context, breaks Breaks, notifier Notifier, open Opener, clo
 	defer cancelSend()
 
 	pending := false
+	wellbeingPending := false
+	wait := &wellbeingWait{}
 	finished := make(chan struct{}, 1)
+	wellbeingFinished := make(chan struct{}, 1)
 	check := func() {
+		if !wellbeingPending && service != nil && presenter != nil && busy != nil {
+			r, ok := service.Due(clock())
+			if ok {
+				isBusy, _ := busy.Busy(ctx)
+				if isBusy {
+					wait.busy = true
+					wait.since = time.Time{}
+				} else if wait.busy {
+					wait.busy = false
+					wait.since = clock()
+				} else if wait.since.IsZero() || clock().Sub(wait.since) >= 2*time.Minute {
+					if err := service.MarkShown(clock()); err != nil {
+						slog.Error("no se pudo registrar la pausa activa", "error", err)
+					} else {
+						wellbeingPending = true
+						wait.since = time.Time{}
+						wg.Add(1)
+						go func(reminder wellbeing.Reminder) {
+							defer wg.Done()
+							defer func() { wellbeingFinished <- struct{}{} }()
+							showWellbeing(sendCtx, service, presenter, reminder, clock)
+						}(r)
+					}
+				}
+			} else {
+				wait.busy = false
+				wait.since = time.Time{}
+			}
+		}
 		if pending {
 			return
 		}
@@ -75,6 +113,8 @@ func Run(ctx context.Context, breaks Breaks, notifier Notifier, open Opener, clo
 			return
 		case <-finished:
 			pending = false
+		case <-wellbeingFinished:
+			wellbeingPending = false
 		case <-ticker.C:
 			check()
 		}
