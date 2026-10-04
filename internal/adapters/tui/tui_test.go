@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"nexus/internal/tracking"
 )
 
@@ -14,6 +15,82 @@ type testStore struct {
 	stopped  []int64
 	running  []tracking.Entry
 	projects []tracking.ProjectUsage
+	recent   []tracking.Entry
+	trash    []tracking.Entry
+	edits    []editCall
+	deleted  []int64
+	restored []int64
+	editErr  error
+}
+
+type editCall struct {
+	id    int64
+	input tracking.EditInput
+}
+
+func removeEntry(entries []tracking.Entry, id int64) ([]tracking.Entry, *tracking.Entry) {
+	for i, entry := range entries {
+		if entry.ID == id {
+			found := entry
+			return append(entries[:i:i], entries[i+1:]...), &found
+		}
+	}
+	return entries, nil
+}
+
+func (s *testStore) Edit(id int64, input tracking.EditInput) (tracking.Entry, error) {
+	s.edits = append(s.edits, editCall{id, input})
+	if s.editErr != nil {
+		return tracking.Entry{}, s.editErr
+	}
+	var updated tracking.Entry
+	for _, list := range []*[]tracking.Entry{&s.running, &s.recent} {
+		for i := range *list {
+			if (*list)[i].ID != id {
+				continue
+			}
+			if input.Title != nil {
+				(*list)[i].Title = *input.Title
+			}
+			if input.Project != nil {
+				(*list)[i].Project = *input.Project
+			}
+			if input.Description != nil {
+				(*list)[i].Description = *input.Description
+			}
+			updated = (*list)[i]
+		}
+	}
+	return updated, nil
+}
+
+func (s *testStore) Delete(id int64) error {
+	s.deleted = append(s.deleted, id)
+	var gone *tracking.Entry
+	s.running, gone = removeEntry(s.running, id)
+	var inRecent *tracking.Entry
+	s.recent, inRecent = removeEntry(s.recent, id)
+	if inRecent != nil {
+		gone = inRecent
+	}
+	if gone != nil {
+		s.trash = append(s.trash, *gone)
+	}
+	return nil
+}
+
+func (s *testStore) Restore(id int64) error {
+	s.restored = append(s.restored, id)
+	var back *tracking.Entry
+	s.trash, back = removeEntry(s.trash, id)
+	if back == nil {
+		return tracking.ErrNotFound
+	}
+	s.recent = append(s.recent, *back)
+	if back.EndedAt == nil {
+		s.running = append(s.running, *back)
+	}
+	return nil
 }
 
 func (s *testStore) Start(input tracking.StartInput) (tracking.Entry, error) {
@@ -33,7 +110,7 @@ func (s *testStore) Stop(id int64) error {
 	return nil
 }
 func (s *testStore) Snapshot() ([]tracking.Entry, int64, []tracking.Entry, error) {
-	return append([]tracking.Entry(nil), s.running...), 0, append([]tracking.Entry(nil), s.running...), nil
+	return append([]tracking.Entry(nil), s.running...), 0, append([]tracking.Entry(nil), s.recent...), nil
 }
 func (s *testStore) Projects(query string) []tracking.ProjectUsage {
 	var matches []tracking.ProjectUsage
@@ -281,6 +358,7 @@ func TestEnterStopsFocusedTimerAndTabToggles(t *testing.T) {
 	db := &testStore{running: []tracking.Entry{{ID: 7, Title: "Existing"}}}
 	m := NewModel(db)
 	m.focus = focusRunningStart
+	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyRight})
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyEnter})
 	if len(db.stopped) != 1 || db.stopped[0] != 7 {
 		t.Fatalf("stopped = %v", db.stopped)
@@ -297,7 +375,7 @@ func TestMouseClickStopUsesRenderedLayout(t *testing.T) {
 	m := NewModel(db)
 	m.width, m.height = 110, 34
 	layout := m.computeLayout()
-	stop := layout.running[0].stop
+	stop := layout.running[0].buttons[1]
 	m = updateMouse(t, m, tea.MouseMsg{X: stop.x, Y: stop.y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	if len(db.stopped) != 1 || db.stopped[0] != 42 {
 		t.Fatalf("click stopped = %v", db.stopped)
@@ -331,3 +409,5 @@ func TestFormatDurationShowsSeconds(t *testing.T) {
 		}
 	}
 }
+
+func lipglossWidth(s string) int { return lipgloss.Width(s) }

@@ -95,12 +95,12 @@ func TestProjectsSortsAndFiltersInTracker(t *testing.T) {
 	}
 }
 
-func (r *memoryRepository) Get(id int64) (Entry, error)        { return Entry{}, ErrNotFound }
-func (r *memoryRepository) Update(Entry) error                 { return ErrNotFound }
-func (r *memoryRepository) SoftDelete(id, at int64) error      { return ErrNotFound }
-func (r *memoryRepository) Restore(id int64) error             { return ErrNotFound }
-func (r *memoryRepository) Deleted(limit int) ([]Entry, error) { return nil, nil }
-func (r *memoryRepository) Purge(before int64) (int, error)    { return 0, nil }
+func (r *memoryRepository) Get(id int64) (Entry, error)         { return Entry{}, ErrNotFound }
+func (r *memoryRepository) Update(Entry) error                  { return ErrNotFound }
+func (r *memoryRepository) SoftDelete(id, at int64) error       { return ErrNotFound }
+func (r *memoryRepository) Restore(id, resumeSince int64) error { return ErrNotFound }
+func (r *memoryRepository) Deleted(limit int) ([]Entry, error)  { return nil, nil }
+func (r *memoryRepository) Purge(before int64) (int, error)     { return 0, nil }
 func (r *memoryRepository) Relink(fromID, toID int64, toName string) error {
 	return nil
 }

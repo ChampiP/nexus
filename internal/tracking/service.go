@@ -113,9 +113,14 @@ func (t *Tracker) Delete(id int64) error {
 	return nil
 }
 
+// resumeWindow es el plazo en que restaurar una tarea borrada en curso la reanuda.
+const resumeWindow = time.Minute
+
 // Restore brings a soft-deleted entry back.
 func (t *Tracker) Restore(id int64) error {
-	if err := t.repository.Restore(id); err != nil {
+	// Un deshacer inmediato devuelve la tarea tal como estaba, incluso si seguía corriendo.
+	resumeSince := t.clock().Add(-resumeWindow).Unix()
+	if err := t.repository.Restore(id, resumeSince); err != nil {
 		return fmt.Errorf("restore entry #%d: %w", id, err)
 	}
 	return nil

@@ -17,9 +17,14 @@ const (
 	focusProject
 	focusDescription
 	focusStart
-	focusRunningStart
+	focusRunningStart // fila de un temporizador activo; el índice está en focusedRunning
 	focusToday
 	focusWeek
+	focusRecent   // fila de recientes; el índice está en focusedRecent
+	focusUndo     // botón [Deshacer] de la barra de estado
+	focusEditSave // botones del panel de edición
+	focusEditDelete
+	focusEditCancel
 )
 
 // Model contains all state needed to render and update the single-screen interface.
@@ -33,6 +38,12 @@ type Model struct {
 	week            bool
 	focus           focusTarget
 	focusedRunning  int
+	focusedRecent   int
+	rowButton       int
+	edit            *editState
+	confirm         *confirmState
+	lastDeleted     *tracking.Entry
+	undoUntil       time.Time
 	pickerOpen      bool
 	pickerIndex     int
 	pickerScroll    int
@@ -64,15 +75,7 @@ func (m *Model) refresh() {
 		}
 	}
 	m.totals, _ = m.tracker.Report(rangeStart(m.now, m.week))
-	if m.focusedRunning >= len(m.running) {
-		m.focusedRunning = len(m.running) - 1
-	}
-	if m.focusedRunning < 0 {
-		m.focusedRunning = 0
-	}
-	if m.focus >= focusRunningStart && m.focus < focusToday && int(m.focus-focusRunningStart) >= len(m.running) {
-		m.focus = focusToday
-	}
+	m.clampFocus()
 }
 
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
@@ -89,12 +92,22 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
 		}
+		if msg.Type == tea.KeyCtrlZ && m.confirm == nil {
+			m.restoreLast()
+			return m, nil
+		}
 		if msg.Type == tea.KeyEsc {
-			if m.pickerOpen {
+			switch {
+			case m.confirm != nil:
+				m.confirm = nil
+			case m.pickerOpen:
 				m.closeProjectPicker()
-				return m, nil
+			case m.edit != nil:
+				m.closeEdit()
+			default:
+				return m, tea.Quit
 			}
-			return m, tea.Quit
+			return m, nil
 		}
 		cmd := m.updateKey(msg)
 		return m, cmd
@@ -103,6 +116,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
+	if m.confirm != nil {
+		m.updateConfirm(key)
+		return nil
+	}
+	if m.edit != nil && m.focus >= focusEditSave {
+		m.updateEditButtons(key)
+		return nil
+	}
 	if m.focus == focusProject && !m.pickerOpen {
 		switch key.Type {
 		case tea.KeyLeft:
@@ -148,19 +169,12 @@ func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 	}
-	if m.focus >= focusRunningStart {
-		if key.Type == tea.KeyUp {
-			m.moveFocus(-1)
-			return nil
-		}
-		if key.Type == tea.KeyDown {
-			m.moveFocus(1)
-			return nil
-		}
-		if key.Type == tea.KeyEnter && m.focus < focusToday {
-			m.stopFocused()
-			return nil
-		}
+	if (m.focus == focusRunningStart || m.focus == focusRecent) && m.updateRowKey(key) {
+		return nil
+	}
+	if m.focus == focusUndo && key.Type == tea.KeyEnter {
+		m.restoreLast()
+		return nil
 	}
 	if key.Type == tea.KeyUp {
 		m.moveFocus(-1)
@@ -176,6 +190,10 @@ func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
 			m.openProjectPicker()
 			return nil
 		case focusTitle, focusDescription, focusStart:
+			if m.edit != nil {
+				m.saveEdit()
+				return nil
+			}
 			if strings.TrimSpace(m.inputs[0].Value()) == "" {
 				m.moveFocus(1)
 			} else {
@@ -205,48 +223,15 @@ func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-func (m *Model) moveFocus(step int) {
-	targets := []focusTarget{focusTitle, focusProject, focusDescription, focusStart}
-	for i := range m.running {
-		targets = append(targets, focusTarget(int(focusRunningStart)+i))
-	}
-	targets = append(targets, focusToday, focusWeek)
-	at := 0
-	for i, target := range targets {
-		if target == m.focus {
-			at = i
-			break
-		}
-	}
-	at += step
-	if at < 0 {
-		at = 0
-	}
-	if at >= len(targets) {
-		at = len(targets) - 1
-	}
-	previous := m.focus
-	m.focus = targets[at]
-	if m.focus == focusProject {
-		m.closeProjectPicker()
-	} else {
-		if previous == focusProject {
-			m.closeProjectPicker()
-		}
-		m.syncInputFocus()
-	}
-}
-
 func (m *Model) stopFocused() {
-	index := int(m.focus) - int(focusRunningStart)
-	if index < 0 || index >= len(m.running) {
+	if m.focus != focusRunningStart || m.focusedRunning >= len(m.running) {
 		return
 	}
-	entry := m.running[index]
+	entry := m.running[m.focusedRunning]
 	if err := m.tracker.Stop(entry.ID); err != nil {
-		m.message = "No se pudo detener: " + err.Error()
+		m.setMessage(errorText("No se pudo detener", err))
 	} else {
-		m.message = "Detenido: " + entry.Title
+		m.setMessage("Detenido: " + entry.Title)
 	}
 	m.refresh()
 }
@@ -254,93 +239,21 @@ func (m *Model) stopFocused() {
 func (m *Model) startTimer() {
 	title := strings.TrimSpace(m.inputs[0].Value())
 	if title == "" {
-		m.message = "Escribe un título"
+		m.setMessage("Escribe un título")
 		return
 	}
 	entry, err := m.tracker.Start(tracking.StartInput{Title: title, Project: m.selectedProject, Description: strings.TrimSpace(m.inputs[2].Value())})
 	if err != nil {
-		m.message = "No se pudo iniciar: " + err.Error()
+		m.setMessage(errorText("No se pudo iniciar", err))
 		return
 	}
 	m.inputs[0].SetValue("")
 	m.inputs[2].SetValue("")
 	m.focus = focusTitle
 	m.pickerOpen = false
-	m.message = "Iniciado: " + entry.Title
+	m.setMessage("Iniciado: " + entry.Title)
 	m.syncInputFocus()
 	m.refresh()
-}
-
-func (m *Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	layout := m.computeLayout()
-	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
-		for i, zone := range layout.fields {
-			if zone.contains(msg.X, msg.Y) {
-				m.focus = focusTarget(i)
-				if m.focus == focusProject {
-					m.openProjectPicker()
-				} else {
-					m.closeProjectPicker()
-					m.syncInputFocus()
-				}
-				return m, nil
-			}
-		}
-		if layout.start.contains(msg.X, msg.Y) {
-			m.focus = focusStart
-			m.startTimer()
-			return m, nil
-		}
-		for i, row := range layout.running {
-			runningIndex := m.runScroll + i
-			if row.stop.contains(msg.X, msg.Y) {
-				m.focus = focusTarget(int(focusRunningStart) + runningIndex)
-				m.stopFocused()
-				return m, nil
-			}
-			if row.row.contains(msg.X, msg.Y) {
-				m.focus = focusTarget(int(focusRunningStart) + runningIndex)
-				m.syncInputFocus()
-				return m, nil
-			}
-		}
-		for i, zone := range layout.options {
-			if zone.contains(msg.X, msg.Y) {
-				m.pickerIndex = layout.optionsStart + i
-				m.selectProject()
-				return m, nil
-			}
-		}
-		if layout.today.contains(msg.X, msg.Y) {
-			m.week = false
-			m.focus = focusToday
-			m.refresh()
-			return m, nil
-		}
-		if layout.week.contains(msg.X, msg.Y) {
-			m.week = true
-			m.focus = focusWeek
-			m.refresh()
-			return m, nil
-		}
-	}
-	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonWheelUp {
-		if m.pickerOpen {
-			m.movePicker(-1)
-		} else if len(m.running) > 0 && m.runScroll > 0 {
-			m.runScroll--
-		}
-		return m, nil
-	}
-	if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonWheelDown {
-		if m.pickerOpen {
-			m.movePicker(1)
-		} else if m.runScroll+1 < len(m.running) {
-			m.runScroll++
-		}
-		return m, nil
-	}
-	return m, nil
 }
 
 func (m *Model) cycleProject(delta int) {

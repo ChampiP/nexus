@@ -9,6 +9,9 @@ import (
 	"nexus/internal/tracking"
 )
 
+// recentContentX es la columna donde empieza el contenido del panel (borde + relleno).
+const recentContentX = 2
+
 func (m Model) View() string {
 	if m.width == 0 {
 		return "Iniciando Nexus…"
@@ -40,27 +43,30 @@ func (m Model) View() string {
 	}
 	lines[layout.descriptionY] = label.Render("Descripción")
 	lines[layout.descriptionY+1] = m.inputs[2].View()
-	button := "[ Iniciar ]"
-	if m.focus == focusStart {
-		button = "› " + button
+	if m.edit != nil {
+		lines[1] = titleStyle.Render(m.editTitle())
+		lines[layout.startY] = m.editButtonsLine()
+	} else {
+		button := "[ Iniciar ]"
+		if m.focus == focusStart {
+			button = "▸ " + button
+		}
+		lines[layout.startY] = lipgloss.NewStyle().Foreground(accent).Bold(true).Render(button)
 	}
-	lines[layout.startY] = lipgloss.NewStyle().Foreground(accent).Bold(true).Render(button)
 	lines[layout.runningY] = titleStyle.Render("EN CURSO")
 	for i, row := range layout.running {
-		entry := m.running[m.runScroll+i]
+		index := m.runScroll + i
+		entry := m.running[index]
 		project := entry.Project
 		if project == "" {
 			project = "Sin proyecto"
 		}
 		prefix := "  "
-		if int(m.focus) == int(focusRunningStart)+i {
-			prefix = "› "
+		if m.focus == focusRunningStart && m.focusedRunning == index {
+			prefix = "▸ "
 		}
 		text := fmt.Sprintf("%s%s  ·  %s  ·  %s", prefix, truncate(entry.Title, 24), truncate(project, 18), clock(m.now.Unix()-entry.StartedAt))
-		button := "■ Detener"
-		text = truncate(text, max(1, m.width-12))
-		padding := max(1, m.width-lipgloss.Width(text)-lipgloss.Width(button))
-		lines[row.row.y] = text + strings.Repeat(" ", padding) + label.Render(button)
+		lines[row.row.y] = composeRow(text, 0, row.buttons, runningLabels, m.selectedButton(focusRunningStart, index))
 	}
 	if len(m.running) == 0 {
 		lines[layout.runningY+1] = label.Render("Aún no hay temporizadores activos")
@@ -73,13 +79,13 @@ func (m Model) View() string {
 		week = "[ Semana ]"
 	}
 	if m.focus == focusToday {
-		today = "› " + today
+		today = "▸ " + today
 	}
 	if m.focus == focusWeek {
-		week = "› " + week
+		week = "▸ " + week
 	}
 	lines[layout.tabsY] = titleStyle.Render(today) + "    " + titleStyle.Render(week)
-	dashboard := m.dashboardPanel()
+	dashboard := m.dashboardPanel(layout)
 	for i, line := range strings.Split(dashboard, "\n") {
 		y := layout.dashboardY + i
 		if y < len(lines) {
@@ -89,13 +95,23 @@ func (m Model) View() string {
 		}
 	}
 	footer := m.hint()
-	if m.message != "" {
-		footer = lipgloss.NewStyle().Foreground(accent).Render(m.message) + "\n" + footer
+	if status, labels := m.statusBar(); status != "" || len(labels) > 0 {
+		line := lipgloss.NewStyle().Foreground(accent).Render(status)
+		if len(labels) > 0 {
+			line += renderButtons(labels, m.statusSelected())
+		}
+		footer = line + "\n" + footer
 	}
 	return strings.Join(lines, "\n") + "\n\n" + label.Render(footer)
 }
 
 func (m Model) hint() string {
+	if m.confirm != nil {
+		return "←→ elegir · Enter confirmar · Esc cancelar · clic en un botón"
+	}
+	if m.edit != nil && !(m.focus == focusProject) {
+		return "↑↓ mover · Enter guardar · Esc cancelar · clic en un campo o botón"
+	}
 	switch m.focus {
 	case focusTitle:
 		return "↑↓ mover · Enter iniciar · clic para seleccionar · Ctrl+C salir"
@@ -110,12 +126,14 @@ func (m Model) hint() string {
 		return "Enter iniciar · ↑↓ mover · clic para iniciar"
 	case focusToday, focusWeek:
 		return "←→ o Enter cambiar período · ↑↓ mover · Ctrl+C salir"
+	case focusUndo:
+		return "Enter deshacer · ↑↓ mover · Ctrl+Z deshacer"
 	default:
-		return "Enter detener · ↑↓ elegir temporizador · clic en ■ Detener"
+		return "←→ elegir acción · Enter ejecutar · ↑↓ mover · Ctrl+Z deshacer"
 	}
 }
 
-func (m Model) dashboardPanel() string {
+func (m Model) dashboardPanel(layout screenLayout) string {
 	rangeName := "Hoy"
 	if m.week {
 		rangeName = "Semana"
@@ -154,7 +172,8 @@ func (m Model) dashboardPanel() string {
 	if len(m.recent) == 0 {
 		lines = append(lines, label.Render("Todavía no hay registros"))
 	}
-	for _, entry := range m.recent {
+	for i, zone := range layout.recent {
+		entry := m.recent[i]
 		project := entry.Project
 		if project == "" {
 			project = "Sin proyecto"
@@ -163,7 +182,12 @@ func (m Model) dashboardPanel() string {
 		if entry.EndedAt != nil {
 			seconds = *entry.EndedAt - entry.StartedAt
 		}
-		lines = append(lines, fmt.Sprintf("%-22s %-14s %s", truncate(entry.Title, 22), truncate(project, 14), formatDuration(seconds)))
+		prefix := "  "
+		if m.focus == focusRecent && m.focusedRecent == i {
+			prefix = "▸ "
+		}
+		text := fmt.Sprintf("%s%-22s %-14s %s", prefix, truncate(entry.Title, 22), truncate(project, 14), formatDuration(seconds))
+		lines = append(lines, composeRow(text, recentContentX, zone.buttons, recentLabels, m.selectedButton(focusRecent, i)))
 	}
 	return panel.Width(max(30, m.width-2)).Render(strings.Join(lines, "\n"))
 }

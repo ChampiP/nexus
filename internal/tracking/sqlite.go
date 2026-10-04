@@ -263,8 +263,12 @@ func (s *SQLite) SoftDelete(id, at int64) error {
 }
 
 // Restore clears the deletion mark of a deleted entry.
-func (s *SQLite) Restore(id int64) error {
-	result, err := s.db.Exec(`UPDATE entries SET deleted_at = NULL WHERE id = ? AND deleted_at IS NOT NULL`, id)
+func (s *SQLite) Restore(id, resumeSince int64) error {
+	// ended_at = deleted_at marca una tarea que estaba en curso cuando se borró.
+	result, err := s.db.Exec(`UPDATE entries SET
+		ended_at = CASE WHEN ended_at = deleted_at AND deleted_at >= ? THEN NULL ELSE ended_at END,
+		deleted_at = NULL
+		WHERE id = ? AND deleted_at IS NOT NULL`, resumeSince, id)
 	return expectRow(result, err, "restore entry")
 }
 

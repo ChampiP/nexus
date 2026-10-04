@@ -139,8 +139,9 @@ func TestDeleteStopsRunningHidesAndRestores(t *testing.T) {
 	if err := tracker.Restore(entry.ID); err != nil {
 		t.Fatal(err)
 	}
+	// Restaurada al instante: vuelve a estar en curso, como antes de borrarla.
 	running, recent, _ = mustLists(t, repo)
-	if len(running) != 0 || len(recent) != 1 || recent[0].EndedAt == nil {
+	if len(running) != 1 || len(recent) != 1 || recent[0].EndedAt != nil {
 		t.Fatalf("after restore: %v %v", running, recent)
 	}
 	if err := tracker.Restore(entry.ID); !errors.Is(err, ErrNotFound) {
@@ -255,5 +256,42 @@ func TestCountByProjectIgnoresDeleted(t *testing.T) {
 	_ = tracker.Delete(a.ID)
 	if n, err := tracker.CountByProject(1); err != nil || n != 1 {
 		t.Fatalf("CountByProject(1) = %d, %v; quiero 1", n, err)
+	}
+}
+
+// Deshacer un borrado reciente de un temporizador en curso lo deja corriendo, como estaba.
+func TestRestoreSoonAfterDeletingRunningEntryResumesIt(t *testing.T) {
+	now := int64(100)
+	tracker, _ := newEditTracker(t, &now)
+	entry, _ := tracker.Start(StartInput{Title: "a"})
+	now = 200
+	_ = tracker.Delete(entry.ID)
+	now = 230
+	if err := tracker.Restore(entry.ID); err != nil {
+		t.Fatal(err)
+	}
+	running, _, _, _ := tracker.Snapshot()
+	if len(running) != 1 || running[0].ID != entry.ID {
+		t.Fatalf("running = %+v, quiero la tarea restaurada en curso", running)
+	}
+}
+
+// Restaurar mucho después, o una tarea que ya estaba detenida, no la vuelve a iniciar.
+func TestRestoreLateOrStoppedEntryStaysStopped(t *testing.T) {
+	now := int64(100)
+	tracker, _ := newEditTracker(t, &now)
+	late, _ := tracker.Start(StartInput{Title: "tarde"})
+	stopped, _ := tracker.Start(StartInput{Title: "detenida"})
+	now = 150
+	_ = tracker.Stop(stopped.ID)
+	now = 200
+	_ = tracker.Delete(late.ID)
+	_ = tracker.Delete(stopped.ID)
+	now = 200 + 3600
+	_ = tracker.Restore(late.ID)
+	now = 210 + 3600
+	_ = tracker.Restore(stopped.ID)
+	if running, _, _, _ := tracker.Snapshot(); len(running) != 0 {
+		t.Fatalf("running = %+v, quiero ninguna", running)
 	}
 }

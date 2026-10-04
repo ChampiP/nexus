@@ -11,6 +11,9 @@ import (
 type Tracker interface {
 	Start(tracking.StartInput) (tracking.Entry, error)
 	Stop(int64) error
+	Edit(int64, tracking.EditInput) (tracking.Entry, error)
+	Delete(int64) error
+	Restore(int64) error
 	Snapshot() ([]tracking.Entry, int64, []tracking.Entry, error)
 	Projects(string) []tracking.ProjectUsage
 	Report(time.Time) ([]tracking.ProjectTotal, error)
