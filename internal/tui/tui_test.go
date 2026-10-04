@@ -5,18 +5,19 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"nexus/internal/store"
+	"nexus/internal/app"
+	"nexus/internal/domain"
 )
 
 type testStore struct {
-	started []store.Entry
+	started []domain.Entry
 	stopped []int64
 	stopAll int
-	running []store.Entry
+	running []domain.Entry
 }
 
-func (s *testStore) Start(title, project, desc string) (store.Entry, error) {
-	entry := store.Entry{ID: int64(len(s.started) + 1), Title: title, Project: project, Description: desc}
+func (s *testStore) Start(input app.StartInput) (domain.Entry, error) {
+	entry := domain.Entry{ID: int64(len(s.started) + 1), Title: input.Title, Project: input.Project, Description: input.Description}
 	s.started = append(s.started, entry)
 	s.running = append(s.running, entry)
 	return entry, nil
@@ -36,12 +37,13 @@ func (s *testStore) StopAll() (int, error) {
 	s.running = nil
 	return s.stopAll, nil
 }
-func (s *testStore) Running() []store.Entry                { return append([]store.Entry(nil), s.running...) }
-func (s *testStore) Recent(int) []store.Entry              { return append([]store.Entry(nil), s.running...) }
-func (s *testStore) Totals(time.Time) []store.ProjectTotal { return nil }
+func (s *testStore) Snapshot() ([]domain.Entry, int64, []domain.Entry, error) {
+	return append([]domain.Entry(nil), s.running...), 0, append([]domain.Entry(nil), s.running...), nil
+}
+func (s *testStore) Report(time.Time) ([]domain.ProjectTotal, error) { return nil, nil }
 
 func TestModelUpdateStartsAndStopsTimer(t *testing.T) {
-	db := &testStore{running: []store.Entry{{ID: 7, Title: "Existing", Project: "Studio"}}}
+	db := &testStore{running: []domain.Entry{{ID: 7, Title: "Existing", Project: "Studio"}}}
 	m := NewModel(db)
 
 	m = updateKey(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})

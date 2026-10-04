@@ -9,25 +9,27 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"nexus/internal/store"
+	"nexus/internal/app"
+	"nexus/internal/domain"
 )
 
-type Store interface {
-	Start(title, project, desc string) (store.Entry, error)
+// Tracker exposes the use cases required by the terminal interface.
+type Tracker interface {
+	Start(app.StartInput) (domain.Entry, error)
 	Stop(id int64) error
 	StopAll() (int, error)
-	Running() []store.Entry
-	Recent(limit int) []store.Entry
-	Totals(since time.Time) []store.ProjectTotal
+	Snapshot() ([]domain.Entry, int64, []domain.Entry, error)
+	Report(time.Time) ([]domain.ProjectTotal, error)
 }
 
 type tickMsg time.Time
 
+// Model is the Bubble Tea model for the existing Nexus terminal interface.
 type Model struct {
-	db           Store
-	running      []store.Entry
-	recent       []store.Entry
-	totals       []store.ProjectTotal
+	db           Tracker
+	running      []domain.Entry
+	recent       []domain.Entry
+	totals       []domain.ProjectTotal
 	todaySeconds int64
 	lastProject  string
 	selected     int
@@ -49,7 +51,8 @@ var (
 	label  = lipgloss.NewStyle().Foreground(muted)
 )
 
-func NewModel(db Store) Model {
+// NewModel creates a terminal model backed by the application tracker.
+func NewModel(db Tracker) Model {
 	m := Model{db: db, now: time.Now()}
 	for i, placeholder := range []string{"Escribe un título", "Nombre del proyecto", "Descripción opcional"} {
 		input := textinput.New()
@@ -67,11 +70,13 @@ func NewModel(db Store) Model {
 	return m
 }
 
-func Run(db Store) error {
+// Run starts the interactive terminal interface.
+func Run(db Tracker) error {
 	_, err := tea.NewProgram(NewModel(db), tea.WithAltScreen()).Run()
 	return err
 }
 
+// Init starts the model's periodic refresh.
 func (m Model) Init() tea.Cmd { return tick() }
 
 func tick() tea.Cmd {
@@ -80,10 +85,16 @@ func tick() tea.Cmd {
 
 func (m *Model) refresh() {
 	m.now = time.Now()
-	m.running = m.db.Running()
-	m.recent = m.db.Recent(8)
-	m.totals = m.db.Totals(rangeStart(m.now, m.week))
-	m.todaySeconds = sumTotals(m.db.Totals(rangeStart(m.now, false)))
+	running, todaySeconds, recent, err := m.db.Snapshot()
+	if err == nil {
+		m.running = running
+		m.todaySeconds = todaySeconds
+		m.recent = recent
+		if len(m.recent) > 8 {
+			m.recent = m.recent[:8]
+		}
+	}
+	m.totals, _ = m.db.Report(rangeStart(m.now, m.week))
 	if len(m.recent) > 0 {
 		m.lastProject = m.recent[0].Project
 	}
@@ -95,6 +106,7 @@ func (m *Model) refresh() {
 	}
 }
 
+// Update applies a Bubble Tea message to the model.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -166,7 +178,7 @@ func (m Model) updateForm(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.message = "El título es obligatorio"
 			return m, nil
 		}
-		entry, err := m.db.Start(title, strings.TrimSpace(m.inputs[1].Value()), strings.TrimSpace(m.inputs[2].Value()))
+		entry, err := m.db.Start(app.StartInput{Title: title, Project: strings.TrimSpace(m.inputs[1].Value()), Description: strings.TrimSpace(m.inputs[2].Value())})
 		if err != nil {
 			m.message = "No se pudo iniciar: " + err.Error()
 			return m, nil
@@ -222,6 +234,7 @@ func (m *Model) stopSelected() {
 	m.refresh()
 }
 
+// View renders the current terminal interface.
 func (m Model) View() string {
 	if m.width == 0 {
 		return "Iniciando Nexus…"
@@ -286,7 +299,7 @@ func (m Model) dashboardPanel() string {
 		rangeName = "Semana"
 	}
 	lines := []string{title.Render("TIEMPO POR PROYECTO  ·  " + rangeName)}
-	totals := append([]store.ProjectTotal(nil), m.totals...)
+	totals := append([]domain.ProjectTotal(nil), m.totals...)
 	sort.Slice(totals, func(i, j int) bool { return totals[i].Seconds > totals[j].Seconds })
 	maxSeconds := int64(0)
 	for _, total := range totals {
@@ -356,7 +369,7 @@ func rangeStart(now time.Time, week bool) time.Time {
 	return start
 }
 
-func sumTotals(totals []store.ProjectTotal) int64 {
+func sumTotals(totals []domain.ProjectTotal) int64 {
 	var sum int64
 	for _, total := range totals {
 		sum += total.Seconds
