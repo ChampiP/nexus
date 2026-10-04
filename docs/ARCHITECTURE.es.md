@@ -41,7 +41,7 @@ fuentes no coincidían, la tabla se queda con la fuente primaria.
 | ¿Trello? | Clave de API + token de usuario para herramientas personales. | Mismo puerto de conector; prioridad baja. |
 | ¿Secretos en este escritorio? | `gnome-keyring` ofrece `org.freedesktop.secrets`. | Guardar los secretos con Secret Service (llavero). Nunca en SQLite, archivos de configuración ni el repositorio. |
 | ¿Botones en las notificaciones? | El servidor de notificaciones de Omarchy anuncia `actions`. | "Volver al trabajo / +10 min / Terminar break" pueden ser botones en la propia notificación. |
-| ¿El nombre `nexus` está libre? | AUR ya tiene `nexus-bin` y `nexus-cli`. | El **paquete** necesita otro nombre (ver §13). |
+| ¿El nombre `nexus` está libre? El nombre exacto `nexus` está libre en AUR y en los repositorios oficiales, pero `nexus-bin` y `nexus-cli` (sin relación, 0 y 1 votos) también instalan `/usr/bin/nexus`, y `nexus-bin` declara `provides=('nexus')`. | Paquete `nexus`, declarando `conflicts` con ambos (ver §13). |
 
 ## 3. Contexto del sistema
 
@@ -312,8 +312,9 @@ Antes de la primera versión pública hace falta un `SECURITY.md` con un canal p
 - El plugin detecta si falta el binario o si es demasiado viejo, y muestra "Instalar Nexus" en lugar de fallar.
 - **Versionado del contrato:** cada salida JSON de la CLI incluye `"api": N`. El plugin declara el
   rango que soporta. Romper el contrato implica una nueva versión mayor.
-- **Nombres:** AUR ya tiene `nexus-bin` y `nexus-cli`. Propuesta: paquete `omarchy-nexus`
-  (y `omarchy-nexus-bin`), binario `nexus`, id del plugin `<dueño>.nexus`. Por decidir.
+- **Nombres:** paquete `nexus` (AUR, compilado desde el código), binario `nexus`, id del plugin
+  `<dueño>.nexus`. El paquete declara `conflicts=('nexus-bin' 'nexus-cli')` porque ambos instalan
+  `/usr/bin/nexus`. Un paquete con binario precompilado necesita otro nombre, porque `nexus-bin` está ocupado.
 - **Licencia:** Apache-2.0 (ya está en el repositorio).
 - **systemd:** el paquete instala una unidad de usuario (`nexus.service`) **deshabilitada** hasta que el usuario la active.
 
@@ -365,11 +366,11 @@ Antes de la primera versión pública hace falta un `SECURITY.md` con un canal p
 - D6. Las escrituras externas y las acciones pedidas por una IA requieren aprobación dentro de Nexus.
 - D7. El plugin de la barra es un cliente delgado del contrato JSON de la CLI y vive en su propio repositorio.
 - D8. Al iniciar un break se pregunta cada vez qué temporizadores en curso detener.
+- D10. El paquete y el binario se llaman `nexus`.
 - D9. El MCP remoto v1 usa un token secreto en la URL detrás de un túnel elegido por el usuario (se recomienda el túnel rápido de Cloudflare); OAuth solo cuando haga falta.
 
 **Preguntas abiertas**
 
-- P1. Nombres finales del paquete y del plugin.
 - P2. Fuente de la señal de inactividad para los avisos de movimiento.
 - P3. Si OpenAI Secure MCP Tunnel puede servir a ChatGPT web con el plan del usuario.
 - P5. Período de retención de las entradas en la papelera (propuesta: 30 días).

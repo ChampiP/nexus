@@ -38,7 +38,7 @@ Each row was checked against primary sources, not only search summaries. Where t
 | Trello? | API key + user token for personal tools. | Same connector port; low priority. |
 | Secrets on this desktop? | `gnome-keyring` provides `org.freedesktop.secrets`. | Store secrets through the Secret Service (keyring). Never in SQLite, config files or the repo. |
 | Notification buttons? | The Omarchy notification server advertises `actions`. | "Back to work / +10 min / End break" can be buttons on the notification itself. |
-| Is the name `nexus` free? | AUR already has `nexus-bin` and `nexus-cli`. | The **package** needs a distinct name (see §13). |
+| Is the name `nexus` free? The exact name `nexus` is free in AUR and the official repos, but `nexus-bin` and `nexus-cli` (unrelated, 0 and 1 votes) also install `/usr/bin/nexus`, and `nexus-bin` declares `provides=('nexus')`. | Package `nexus`, declaring `conflicts` with both (see §13). |
 
 ## 3. System context
 
@@ -304,8 +304,9 @@ A `SECURITY.md` with a private disclosure channel is required before the first p
 - The plugin detects a missing or too-old binary and shows "Install Nexus" instead of failing.
 - **Contract versioning:** every JSON output of the CLI includes `"api": N`. The plugin declares the
   range it supports. Breaking the contract means a new major version.
-- **Naming:** AUR already has `nexus-bin` and `nexus-cli`. Proposal: package `omarchy-nexus`
-  (and `omarchy-nexus-bin`), binary `nexus`, plugin id `<owner>.nexus`. To be decided.
+- **Naming:** package `nexus` (AUR, built from source), binary `nexus`, plugin id `<owner>.nexus`.
+  The package declares `conflicts=('nexus-bin' 'nexus-cli')` because both install `/usr/bin/nexus`.
+  A prebuilt-binary package needs another name, since `nexus-bin` is taken.
 - **License:** Apache-2.0 (already in the repository).
 - **systemd:** the package installs a user unit (`nexus.service`) that is **disabled** until the
   user enables it.
@@ -358,11 +359,11 @@ A `SECURITY.md` with a private disclosure channel is required before the first p
 - D6. External writes and AI-requested actions require approval inside Nexus.
 - D7. The bar plugin is a thin client of the CLI JSON contract and lives in its own repository.
 - D8. Starting a break asks every time which running timers to stop.
+- D10. The package and the binary are both named `nexus`.
 - D9. Remote MCP v1 uses a secret URL token behind a user-chosen tunnel (Cloudflare quick tunnel recommended); OAuth only when needed.
 
 **Open questions**
 
-- Q1. Final package and plugin names.
 - Q2. Idle signal source for movement reminders.
 - Q3. Whether OpenAI Secure MCP Tunnel can serve ChatGPT web for the user's plan.
 - Q5. Retention period for soft-deleted entries (proposal: 30 days).
