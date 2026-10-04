@@ -9,6 +9,10 @@ func (m *Model) updateWideMouse(msg tea.MouseMsg, g wideGeometry, layout screenL
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
 		return m.updateMouseNarrowFallback(msg)
 	}
+	if tab := m.wideCatalogTabZone(); tab.contains(msg.X, msg.Y) {
+		m.openCatalogOverlay()
+		return m, nil
+	}
 	if msg.X >= g.rightX && msg.X < g.rightX+g.rightWidth {
 		local := msg
 		local.X -= g.rightX

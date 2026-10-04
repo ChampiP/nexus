@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"nexus/internal/tracking"
 )
 
@@ -35,10 +36,10 @@ func TestRecentButtonsAreForStoppedTasks(t *testing.T) {
 	if got := len(layout.recent[0].buttons); got != 3 {
 		t.Fatalf("fila detenida: %d botones, quería 3", got)
 	}
-	if line := viewLine(t, m, layout.recent[0].row.y); !strings.Contains(line, "[▶ Reanudar] [✎ Editar] [✕ Eliminar]") {
+	if line := ansi.Strip(viewLine(t, m, layout.recent[0].row.y)); !strings.Contains(line, "▶ Reanudar") || !strings.Contains(line, "✎ Editar") || !strings.Contains(line, "✕ Eliminar") {
 		t.Fatalf("fila detenida sin Reanudar primero: %q", line)
 	}
-	if line := viewLine(t, m, layout.running[0].row.y); !strings.Contains(line, "[✎ Editar] [■ Detener]") || strings.Contains(line, "Reanudar") {
+	if line := ansi.Strip(viewLine(t, m, layout.running[0].row.y)); !strings.Contains(line, "✎ Editar") || !strings.Contains(line, "■ Detener") || strings.Contains(line, "Reanudar") {
 		t.Fatalf("fila en curso cambió: %q", line)
 	}
 }

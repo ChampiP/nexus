@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"nexus/internal/tracking"
 )
 
@@ -90,8 +91,8 @@ func TestEnterOnEditOpensPrefilledPanel(t *testing.T) {
 	db.recent[0].Description = "detalle"
 	m := goTo(t, newRowsModel(db), focusRecent, 0)
 	m = press(t, m, tea.KeyRight, tea.KeyEnter)
-	view := m.View()
-	for _, text := range []string{"Editar tarea #2", "[Guardar]", "[Eliminar]", "[Cancelar]"} {
+	view := ansi.Strip(m.View())
+	for _, text := range []string{"Editar tarea #2", "Guardar", "Eliminar", "Cancelar"} {
 		if !strings.Contains(view, text) {
 			t.Fatalf("falta %q en la vista:\n%s", text, view)
 		}
@@ -183,8 +184,8 @@ func TestDeleteRequiresConfirmationAndDefaultsToCancel(t *testing.T) {
 	db := newRowsStore()
 	m := goTo(t, newRowsModel(db), focusRecent, 0)
 	m = press(t, m, tea.KeyRight, tea.KeyRight, tea.KeyEnter)
-	view := m.View()
-	if !strings.Contains(view, "¿Eliminar «Vieja A» y su sesión? Quedará en la papelera.") || !strings.Contains(view, "[Eliminar]") || !strings.Contains(view, "[Cancelar]") {
+	view := ansi.Strip(m.View())
+	if !strings.Contains(view, "¿Eliminar «Vieja A» y su sesión? Quedará en la papelera.") || !strings.Contains(view, "Eliminar") || !strings.Contains(view, "Cancelar") {
 		t.Fatalf("falta la confirmación:\n%s", view)
 	}
 	if len(db.deleted) != 0 {
@@ -209,7 +210,7 @@ func TestConfirmDeletesThenUndoByButtonAndCtrlZ(t *testing.T) {
 	if len(db.deleted) != 1 || db.deleted[0] != "t2" {
 		t.Fatalf("eliminadas = %v", db.deleted)
 	}
-	if !strings.Contains(m.View(), "Eliminada «Vieja A» · [Deshacer]") {
+	if !strings.Contains(ansi.Strip(m.View()), "Eliminada «Vieja A» ·  Deshacer ") {
 		t.Fatalf("falta el aviso con Deshacer:\n%s", m.View())
 	}
 	m = goTo(t, m, focusUndo, 0)
@@ -349,18 +350,19 @@ func TestLayoutMatchesRenderedLines(t *testing.T) {
 	m = goTo(t, m, focusRecent, 1)
 	m = press(t, m, tea.KeyRight, tea.KeyRight, tea.KeyEnter)
 	layout := m.computeLayout()
-	lines := strings.Split(m.View(), "\n")
-	check := func(y int, z rect, text string) {
+	lines := strings.Split(ansi.Strip(m.View()), "\n")
+	check := func(y int, z rect, label string) {
 		t.Helper()
 		if y >= len(lines) {
 			t.Fatalf("línea %d fuera de la vista", y)
 		}
-		at := strings.Index(lines[y], text)
+		pill := " " + label + " "
+		at := strings.Index(lines[y], pill)
 		if at < 0 || lipglossWidth(lines[y][:at]) != z.x {
-			t.Fatalf("línea %d: %q no está en la columna %d: %q", y, text, z.x, lines[y])
+			t.Fatalf("línea %d: %q no está en la columna %d: %q", y, label, z.x, lines[y])
 		}
 	}
-	check(layout.running[0].row.y, layout.running[0].buttons[0], "[✎ Editar]")
-	check(layout.recent[1].row.y, layout.recent[1].buttons[2], "[✕ Eliminar]")
-	check(layout.statusY, layout.statusButtons[0], "[Eliminar]")
+	check(layout.running[0].row.y, layout.running[0].buttons[0], "✎ Editar")
+	check(layout.recent[1].row.y, layout.recent[1].buttons[2], "✕ Eliminar")
+	check(layout.statusY, layout.statusButtons[0], "Eliminar")
 }

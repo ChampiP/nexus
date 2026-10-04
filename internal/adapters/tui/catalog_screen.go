@@ -395,7 +395,7 @@ func (m *Model) loadCatalog() {
 	if tree, err := m.catalog.Tree(); err == nil {
 		m.tree = tree
 	}
-	if m.screen == screenCatalog {
+	if m.screen == screenCatalog || m.isCatalogOverlayOpen() {
 		m.rebuildCatalogRows()
 	}
 }
@@ -572,6 +572,8 @@ func (m *Model) updateCatalogKey(key tea.KeyMsg) tea.Cmd {
 		if m.catalogBusy() {
 			m.cancelCatalogModal()
 			m.setMessage("Cancelado")
+		} else if m.isCatalogOverlayOpen() {
+			m.closeCatalogOverlay()
 		} else {
 			m.switchScreen(screenTimers)
 		}
@@ -686,6 +688,10 @@ func (m *Model) submitCatalogInput() {
 			err = m.catalog.RenameClient(in.row.id, name)
 		default:
 			err = m.catalog.RenameProject(in.row.id, name)
+			if err == nil && strings.EqualFold(m.selectedProject, in.row.name) {
+				m.selectedProject = name
+				m.inputs[1].SetValue(name)
+			}
 		}
 		// Ante un error el campo sigue abierto para corregir el nombre.
 		if m.finishCatalog("Renombrado «"+name+"»", err) {

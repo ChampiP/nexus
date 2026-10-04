@@ -62,12 +62,7 @@ BarWidget {
     active: client.running.length > 0
     useActiveColor: false
     text: Model.barLabel(root.displayedTodaySeconds, client.running.length)
-    tooltipText: client.running.length === 0
-      ? "Nexus: sin temporizadores"
-      : client.running.map(function(entry) {
-          return entry.title + (entry.project ? " (" + entry.project + ")" : "")
-            + "  " + Model.formatClock(entry.started_at, Date.now())
-        }).join("\n")
+    tooltipText: Model.barTooltip(root.displayedTodaySeconds, client.running, Date.now(), client.stale)
     onPressed: function(buttonCode) {
       if (buttonCode === Qt.MiddleButton) client.stopAll()
       else if (buttonCode === Qt.LeftButton) root.toggle()

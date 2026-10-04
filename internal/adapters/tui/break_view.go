@@ -89,8 +89,12 @@ func (m Model) startForm(width int, l breakLayout) []string {
 	if strings.TrimSpace(f.custom.Value()) != "" {
 		selected = -1
 	}
+	durationFocus := -1
+	if !m.bp.onTabs && f.row == breakRowDuration {
+		durationFocus = f.choice
+	}
 	lines := []string{
-		mark(breakRowDuration) + label.Render("Duración") + "  " + renderButtons(breakDurationLabels, selected),
+		mark(breakRowDuration) + label.Render("Duración") + "  " + RenderOptions(breakDurationLabels, selected, durationFocus),
 		mark(breakRowCustom) + label.Render("Otro (min): ") + f.custom.View(),
 	}
 	if len(f.timers) > 0 {
@@ -169,6 +173,15 @@ func (m Model) activePauseLines() []string {
 		enabled = 0
 	}
 	focusRow := func(row int) bool { return !m.bp.onTabs && m.bp.settingsRow == row }
+	focusedCol := func(row int) int {
+		if !m.bp.onTabs && m.bp.settingsRow == row {
+			return m.bp.action
+		}
+		return -1
+	}
+	focusOption := func(row, col int) bool {
+		return !m.bp.onTabs && m.bp.settingsRow == row && m.bp.action == col
+	}
 	statusLine := status + fmt.Sprintf(" · Hoy: %d hechas · %d saltada%s", counters.Done, counters.Skipped, pluralSuffix(counters.Skipped))
 	if geometry, wide := m.wideGeometry(); wide {
 		statusLine = truncateToWidth(statusLine, geometry.rightWidth-4)
@@ -179,30 +192,22 @@ func (m Model) activePauseLines() []string {
 	}
 	if _, wide := m.wideGeometry(); wide {
 		lines = append(lines, pauseRowPrefix("Activar", focusRow(0)))
-		lines = append(lines, renderButtons([]string{"Sí", "No"}, enabled))
+		lines = append(lines, RenderOptions([]string{"Sí", "No"}, enabled, focusedCol(0)))
 		lines = append(lines, pauseRowPrefix("Cada", focusRow(1)))
 		for i, option := range []string{"10 min", "20 min", "30 min", "45 min", "60 min"} {
-			selected := -1
-			if pauseEveryIndex(cfg.Every) == i {
-				selected = 0
-			}
-			lines = append(lines, renderButtons([]string{option}, selected))
+			lines = append(lines, RenderOption(option, pauseEveryIndex(cfg.Every) == i, focusOption(1, i)))
 		}
 		lines = append(lines, pauseRowPrefix("Dura", focusRow(2)))
 		for i, option := range []string{"10 s", "15 s", "20 s", "30 s", "1 min", "2 min", "5 min"} {
-			selected := -1
-			if pauseDurationIndex(cfg.Duration) == i {
-				selected = 0
-			}
-			lines = append(lines, renderButtons([]string{option}, selected))
+			lines = append(lines, RenderOption(option, pauseDurationIndex(cfg.Duration) == i, focusOption(2, i)))
 		}
 		lines = append(lines, renderButtons(pauseButtonLabels(m.pauseStatus, m.now), pauseSelected(m.bp)))
 		return lines
 	}
 	return append(lines,
-		pauseRowPrefix("Activar", focusRow(0))+"     "+renderButtons([]string{"Sí", "No"}, enabled),
-		pauseRowPrefix("Cada", focusRow(1))+renderButtons([]string{"10 min", "20 min", "30 min", "45 min", "60 min"}, pauseEveryIndex(cfg.Every)),
-		pauseRowPrefix("Dura", focusRow(2))+renderButtons([]string{"10 s", "15 s", "20 s", "30 s", "1 min", "2 min", "5 min"}, pauseDurationIndex(cfg.Duration)),
+		pauseRowPrefix("Activar", focusRow(0))+"     "+RenderOptions([]string{"Sí", "No"}, enabled, focusedCol(0)),
+		pauseRowPrefix("Cada", focusRow(1))+RenderOptions([]string{"10 min", "20 min", "30 min", "45 min", "60 min"}, pauseEveryIndex(cfg.Every), focusedCol(1)),
+		pauseRowPrefix("Dura", focusRow(2))+RenderOptions([]string{"10 s", "15 s", "20 s", "30 s", "1 min", "2 min", "5 min"}, pauseDurationIndex(cfg.Duration), focusedCol(2)),
 		renderButtons(pauseButtonLabels(m.pauseStatus, m.now), pauseSelected(m.bp)),
 	)
 }

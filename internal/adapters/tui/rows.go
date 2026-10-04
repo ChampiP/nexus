@@ -353,26 +353,20 @@ func (m Model) statusSelected() int {
 	return -1
 }
 
-// renderButtons dibuja botones [Etiqueta]; el enfocado lleva fondo de acento, no solo color.
+// renderButtons dibuja botones como píldoras coloreadas.
 func renderButtons(labels []string, selected int) string {
 	return renderButtonsOn(labels, selected, false)
 }
 
-// renderButtonsOn es renderButtons para una fila enfocada, con el fondo sutil también entre botones.
+// renderButtonsOn dibuja botones como píldoras, con fondo sutil en el separador si la fila está enfocada.
 func renderButtonsOn(labels []string, selected int, rowFocused bool) string {
-	base := lipgloss.NewStyle().Foreground(accent)
 	separator := buttonSeparator
 	if rowFocused {
-		base = base.Background(rowBg)
 		separator = focusRow.Render(buttonSeparator)
 	}
 	parts := make([]string, len(labels))
 	for i, label := range labels {
-		style := base
-		if i == selected {
-			style = focusButton
-		}
-		parts[i] = style.Render(buttonText(label))
+		parts[i] = RenderButton(label, i == selected)
 	}
 	return strings.Join(parts, separator)
 }

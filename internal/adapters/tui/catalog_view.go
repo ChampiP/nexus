@@ -7,18 +7,26 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// catalogView dibuja la pantalla de catálogo usando las zonas de catalogLayout.
-func (m Model) catalogView() string {
-	l := m.catalogLayout()
+// renderCatalogLines genera las líneas de contenido del catálogo para pantalla completa o panel superpuesto.
+func (m Model) renderCatalogLines(width int, l catalogLayout, isOverlay bool) []string {
 	c := m.cat
-	width := m.width
 	lines := make([]string, l.modalY)
-	lines[0] = titleStyle.Render("NEXUS") + "  " + renderTabs(m.screens(), screenCatalog, c.focus == catFocusTabs)
-	heading := "ORGANIZACIÓN › CLIENTE › PROYECTO"
-	if l.visible < len(c.rows) {
-		heading += fmt.Sprintf("  ·  filas %d-%d de %d", l.first+1, l.first+l.visible, len(c.rows))
+	if isOverlay {
+		heading := "CATÁLOGO · Organización › Cliente › Proyecto"
+		if l.visible < len(c.rows) {
+			heading += fmt.Sprintf("  ·  filas %d-%d de %d", l.first+1, l.first+l.visible, len(c.rows))
+		}
+		closeBtn := RenderButton("✕ Cerrar", false)
+		spaces := max(1, width-lipgloss.Width(heading)-lipgloss.Width(closeBtn))
+		lines[l.headingY] = titleStyle.Render(heading) + strings.Repeat(" ", spaces) + closeBtn
+	} else {
+		lines[0] = titleStyle.Render("NEXUS") + "  " + renderTabs(m.screens(), screenCatalog, c.focus == catFocusTabs)
+		heading := "ORGANIZACIÓN › CLIENTE › PROYECTO"
+		if l.visible < len(c.rows) {
+			heading += fmt.Sprintf("  ·  filas %d-%d de %d", l.first+1, l.first+l.visible, len(c.rows))
+		}
+		lines[l.headingY] = titleStyle.Render(heading)
 	}
-	lines[l.headingY] = titleStyle.Render(heading)
 	if len(c.rows) == 0 {
 		lines[l.treeY] = label.Render("El catálogo está vacío; crea una organización, un cliente o un proyecto")
 	}
@@ -53,6 +61,16 @@ func (m Model) catalogView() string {
 		selected := c.confirm.button
 		lines = append(lines, lipgloss.NewStyle().Foreground(accent).Render(c.confirm.text), "  "+renderButtons(c.confirm.labels(), selected))
 	}
+	if isOverlay {
+		return lines[1:]
+	}
+	return lines
+}
+
+// catalogView dibuja la pantalla de catálogo usando las zonas de catalogLayout.
+func (m Model) catalogView() string {
+	l := m.catalogLayout()
+	lines := m.renderCatalogLines(m.width, l, false)
 	footer := m.catalogHint()
 	if m.message != "" {
 		footer = lipgloss.NewStyle().Foreground(accent).Render(m.message) + "\n" + footer

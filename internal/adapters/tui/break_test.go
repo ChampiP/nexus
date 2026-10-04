@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"nexus/internal/countdown"
 	"nexus/internal/tracking"
 	"nexus/internal/wellbeing"
@@ -104,10 +105,10 @@ func onBreakPage(t *testing.T, store *testStore, breaks *fakeBreaks) Model {
 	return m
 }
 
-// screenLine devuelve la línea y de la vista sin los caracteres anteriores a la columna x.
+// screenLine devuelve la línea y de la vista (sin escapes ANSI) a partir de la columna x.
 func screenLine(t *testing.T, view string, x, y int) string {
 	t.Helper()
-	lines := strings.Split(view, "\n")
+	lines := strings.Split(ansi.Strip(view), "\n")
 	if y >= len(lines) {
 		t.Fatalf("la vista no tiene la línea %d", y)
 	}
@@ -183,14 +184,14 @@ func TestActivePauseOptionsNavigationClicksAndDND(t *testing.T) {
 	m.tryPause = func() { called <- struct{}{} }
 	m.loadWellbeing()
 	m.screen, m.bp.onTabs = screenBreak, false
-	view := m.View()
-	for _, text := range []string{"[Sí]", "[No]", "[10 min] [20 min] [30 min] [45 min] [60 min]", "[10 s] [15 s] [20 s] [30 s] [1 min] [2 min] [5 min]", "45 min", "15 s"} {
+	view := ansi.Strip(m.View())
+	for _, text := range []string{"Sí", "No", "10 min", "20 min", "30 min", "45 min", "60 min", "10 s", "15 s", "20 s", "30 s", "1 min", "2 min", "5 min", "45 min", "15 s"} {
 		if !strings.Contains(view, text) {
 			t.Errorf("falta %q:\n%s", text, view)
 		}
 	}
 	layout := m.breakLayout()
-	if !strings.HasPrefix(screenLine(t, view, layout.pauseOptions[1][3].x, layout.pauseOptions[1][3].y), "[45 min]") {
+	if !strings.HasPrefix(strings.TrimSpace(screenLine(t, view, layout.pauseOptions[1][3].x, layout.pauseOptions[1][3].y)), "45 min") {
 		t.Fatalf("hit-test Cada no coincide con la vista:\n%s", view)
 	}
 	m = click(t, m, layout.pauseOptions[1][1])
@@ -449,8 +450,8 @@ func TestBreakPageActiveCardTexts(t *testing.T) {
 	brk := &countdown.Break{Label: "Break", StartedAt: start.Unix(), EndsAt: end.Unix(), ResumeEntryIDs: []int64{1, 2, 77}}
 	m := onBreakPage(t, store, &fakeBreaks{active: brk})
 	m.now = end.Add(-2530 * time.Second)
-	view := m.View()
-	for _, text := range []string{"☕ Break", "Quedan 0:42:10", "De 15:00 a 15:40", "Al volver se reanudan: Informe, Diseño", "[Volver al trabajo]", "[+10 min]", "[Terminar break]"} {
+	view := ansi.Strip(m.View())
+	for _, text := range []string{"☕ Break", "Quedan 0:42:10", "De 15:00 a 15:40", "Al volver se reanudan: Informe, Diseño", "Volver al trabajo", "+10 min", "Terminar break"} {
 		if !strings.Contains(view, text) {
 			t.Errorf("falta %q en:\n%s", text, view)
 		}
@@ -459,12 +460,12 @@ func TestBreakPageActiveCardTexts(t *testing.T) {
 		t.Errorf("la tarjeta no debe mostrar el formulario ni temporizadores no recordados:\n%s", view)
 	}
 	m.now = end.Add(753 * time.Second)
-	if view = m.View(); !strings.Contains(view, "Excedido +0:12:33") || strings.Contains(view, "Quedan") {
+	if view = ansi.Strip(m.View()); !strings.Contains(view, "Excedido +0:12:33") || strings.Contains(view, "Quedan") {
 		t.Errorf("falta el estado vencido:\n%s", view)
 	}
 	empty := &countdown.Break{Label: "Break", StartedAt: start.Unix(), EndsAt: end.Unix()}
 	m = onBreakPage(t, store, &fakeBreaks{active: empty})
-	if !strings.Contains(m.View(), "No se reanudará ningún temporizador") {
+	if !strings.Contains(ansi.Strip(m.View()), "No se reanudará ningún temporizador") {
 		t.Errorf("falta el texto sin temporizadores:\n%s", m.View())
 	}
 }
@@ -496,7 +497,7 @@ func TestBreakPageButtonClicksUseLayout(t *testing.T) {
 		if len(layout.actions) != 3 {
 			t.Fatalf("actions = %v", layout.actions)
 		}
-		if got := screenLine(t, m.View(), layout.actions[i].x, layout.actions[i].y); !strings.HasPrefix(got, buttonText(breakActionLabels[i])) {
+		if got := screenLine(t, m.View(), layout.actions[i].x, layout.actions[i].y); !strings.HasPrefix(strings.TrimSpace(got), breakActionLabels[i]) {
 			t.Fatalf("el botón %d no está donde dice el layout: %q", i, got)
 		}
 		click(t, m, layout.actions[i])
@@ -514,7 +515,7 @@ func TestReturnToWorkMessageAndFormAfterEnd(t *testing.T) {
 	if m.message != "De vuelta: reanudados 2 temporizadores" {
 		t.Fatalf("message = %q", m.message)
 	}
-	if m.screen != screenBreak || !strings.Contains(m.View(), "[Empezar break]") {
+	if m.screen != screenBreak || !strings.Contains(ansi.Strip(m.View()), "Empezar break") {
 		t.Fatalf("tras terminar debe verse el formulario:\n%s", m.View())
 	}
 }
@@ -526,8 +527,8 @@ func TestBreakPageStartFormDefaults(t *testing.T) {
 	if f.choice != 2 || len(f.checked) != 2 || !f.checked[0] || !f.checked[1] {
 		t.Fatalf("form = %+v", f)
 	}
-	view := m.View()
-	for _, text := range []string{"[15 min]", "[30 min]", "[1 h]", "Otro (min)", "Detener:", "[x] Uno", "[x] Dos", "[Empezar break]"} {
+	view := ansi.Strip(m.View())
+	for _, text := range []string{"15 min", "30 min", "1 h", "Otro (min)", "Detener:", "[x] Uno", "[x] Dos", "Empezar break"} {
 		if !strings.Contains(view, text) {
 			t.Errorf("falta %q en:\n%s", text, view)
 		}
@@ -618,10 +619,10 @@ func TestBreakPageFormClicks(t *testing.T) {
 	breaks := &fakeBreaks{}
 	m := onBreakPage(t, twoTimers(), breaks)
 	layout := m.breakLayout()
-	if got := screenLine(t, m.View(), layout.durations[0].x, layout.durations[0].y); !strings.HasPrefix(got, "[15 min]") {
+	if got := screenLine(t, m.View(), layout.durations[0].x, layout.durations[0].y); !strings.HasPrefix(strings.TrimSpace(got), "15 min") {
 		t.Fatalf("la zona de duración no coincide con el dibujo: %q", got)
 	}
-	if got := screenLine(t, m.View(), layout.start.x, layout.start.y); !strings.HasPrefix(got, "[Empezar break]") {
+	if got := screenLine(t, m.View(), layout.start.x, layout.start.y); !strings.HasPrefix(strings.TrimSpace(got), "Empezar break") {
 		t.Fatalf("la zona de inicio no coincide con el dibujo: %q", got)
 	}
 	m = click(t, m, layout.durations[0])

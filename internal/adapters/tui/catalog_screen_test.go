@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"nexus/internal/catalog"
 	"nexus/internal/tracking"
 )
@@ -277,8 +278,8 @@ func TestCatalogTreeRowsAndFocusSkipsHeaders(t *testing.T) {
 	if strings.Join(got, ",") != "0:Holinsys,1:Depilab,2:Depiloto,2:Lumirecon,0:Sin organización,1:Sin cliente,2:web suelto" {
 		t.Fatalf("filas = %v", got)
 	}
-	view := m.View()
-	for _, text := range []string{"Holinsys", "Sin organización", "Sin cliente", "1:20:00 esta semana · 3 tareas", "web suelto", "[+ Organización]", "[Mostrar archivados]"} {
+	view := ansi.Strip(m.View())
+	for _, text := range []string{"Holinsys", "Sin organización", "Sin cliente", "1:20:00 esta semana · 3 tareas", "web suelto", "+ Organización", "Mostrar archivados"} {
 		if !strings.Contains(view, text) {
 			t.Errorf("la vista no contiene %q:\n%s", text, view)
 		}
@@ -467,7 +468,7 @@ func TestMergeAsksConfirmationWithCancelDefault(t *testing.T) {
 	if m.cat.confirm == nil || m.cat.confirm.text != "¿Unir «web suelto» en «Depiloto»? 12 tareas pasarán a «Depiloto»." || m.cat.confirm.button != 1 {
 		t.Fatalf("confirmación = %+v", m.cat.confirm)
 	}
-	if !strings.Contains(m.View(), "[Unir]") || !strings.Contains(m.View(), "12 tareas pasarán") {
+	if !strings.Contains(ansi.Strip(m.View()), "Unir") || !strings.Contains(m.View(), "12 tareas pasarán") {
 		t.Fatal("la confirmación debía verse en pantalla")
 	}
 	m = press(t, m, tea.KeyEnter) // Cancelar por defecto
@@ -527,7 +528,7 @@ func TestArchiveToggleAndShowArchived(t *testing.T) {
 		m = press(t, m, tea.KeyDown)
 	}
 	m = press(t, m, tea.KeyEnter)
-	if !m.cat.showArchived || !strings.Contains(m.View(), "[Ocultar archivados]") || !strings.Contains(m.View(), "Lumirecon (archivado)") {
+	if !m.cat.showArchived || !strings.Contains(ansi.Strip(m.View()), "Ocultar archivados") || !strings.Contains(m.View(), "Lumirecon (archivado)") {
 		t.Fatalf("el interruptor debía mostrar los archivados:\n%s", m.View())
 	}
 	m = focusCatalogRow(t, m, "Lumirecon")

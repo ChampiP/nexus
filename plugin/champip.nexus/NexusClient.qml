@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell.Io
+import "Model.js" as Model
 
 // Non-visual Item: its default property hosts the Process children.
 Item {
@@ -10,6 +11,7 @@ Item {
   property int todaySeconds: 0
   property var projects: []
   property string errorMessage: ""
+  property bool stale: false
   property double sampledAtMs: Date.now()
   property string pendingProjectsQuery: ""
   property string activeProjectsQuery: ""
@@ -67,14 +69,31 @@ Item {
       onStreamFinished: {
         try {
           var status = JSON.parse(String(text || "{}"))
-          root.running = Array.isArray(status.running) ? status.running : []
-          root.todaySeconds = Number(status.today_seconds) || 0
-          root.sampledAtMs = Date.now()
-        } catch (e) { root.reportFailure("No se pudo leer el estado de Nexus") }
+          var applied = Model.applyStatus({
+            running: root.running,
+            todaySeconds: root.todaySeconds,
+            stale: root.stale
+          }, status)
+          root.running = applied.running
+          root.todaySeconds = applied.todaySeconds
+          root.stale = applied.stale
+          if (applied.stale) {
+            root.reportFailure(applied.error || "No se pudo leer el estado de Nexus")
+          } else {
+            root.errorMessage = ""
+            root.sampledAtMs = Date.now()
+          }
+        } catch (e) {
+          root.stale = true
+          root.reportFailure("No se pudo leer el estado de Nexus")
+        }
       }
     }
     onExited: function(code) {
-      if (code !== 0) root.reportFailure("No se pudo consultar el estado de Nexus")
+      if (code !== 0) {
+        root.stale = true
+        root.reportFailure("No se pudo consultar el estado de Nexus")
+      }
     }
   }
 

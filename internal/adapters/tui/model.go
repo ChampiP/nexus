@@ -34,47 +34,50 @@ const (
 
 // Model contains all state needed to render and update the single-screen interface.
 type Model struct {
-	tracker           Tracker
-	inputs            []textinput.Model
-	running           []tracking.Entry
-	recent            []tracking.TaskSummary // tareas de RECIENTES, una fila por tarea
-	tasks             map[string]tracking.TaskSummary
-	totals            []tracking.ProjectTotal
-	todaySeconds      int64
-	week              bool
-	focus             focusTarget
-	focusedRunning    int
-	focusedRecent     int
-	rowButton         int
-	wideColumn        int
-	wideRemembered    [3]navCell
-	wideHasRemembered [3]bool
-	edit              *editState
-	confirm           *confirmState
-	lastDeleted       *tracking.TaskSummary
-	undoUntil         time.Time
-	pickerOpen        bool
-	pickerIndex       int
-	pickerScroll      int
-	runScroll         int
-	width, height     int
-	now               time.Time
-	message           string
-	selectedProject   string
-	catalog           Catalog
-	tree              []catalog.TreeOrganization
-	screen            screen
-	cat               catalogState
-	breaks            Breaks
-	wellbeing         Wellbeing
-	tryPause          func()
-	pauseStatus       wellbeing.Status
-	pauseErr          error
-	brk               *countdown.Break
-	bp                breakPage
-	wasOverdue        bool
-	spin              spinner.Model
-	fastActive        bool // hay un tick rápido en vuelo
+	tracker             Tracker
+	inputs              []textinput.Model
+	running             []tracking.Entry
+	recent              []tracking.TaskSummary // tareas de RECIENTES, una fila por tarea
+	tasks               map[string]tracking.TaskSummary
+	totals              []tracking.ProjectTotal
+	todaySeconds        int64
+	week                bool
+	focus               focusTarget
+	focusedRunning      int
+	focusedRecent       int
+	rowButton           int
+	wideColumn          int
+	wideRemembered      [3]navCell
+	wideHasRemembered   [3]bool
+	edit                *editState
+	confirm             *confirmState
+	lastDeleted         *tracking.TaskSummary
+	undoUntil           time.Time
+	pickerOpen          bool
+	pickerIndex         int
+	pickerScroll        int
+	runScroll           int
+	width, height       int
+	now                 time.Time
+	message             string
+	selectedProject     string
+	catalog             Catalog
+	tree                []catalog.TreeOrganization
+	screen              screen
+	cat                 catalogState
+	catOverlay          bool
+	catOverlayPrevFocus focusTarget
+	catOverlayPrevCol   int
+	breaks              Breaks
+	wellbeing           Wellbeing
+	tryPause            func()
+	pauseStatus         wellbeing.Status
+	pauseErr            error
+	brk                 *countdown.Break
+	bp                  breakPage
+	wasOverdue          bool
+	spin                spinner.Model
+	fastActive          bool // hay un tick rápido en vuelo
 }
 
 // NewModel creates a ready-to-type model backed by the application tracker.
@@ -161,6 +164,10 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.refresh()
 		return m, tick()
 	case tea.MouseMsg:
+		if m.isCatalogOverlayOpen() {
+			_, cmd := m.updateCatalogOverlayMouse(msg)
+			return m, cmd
+		}
 		if m.screen == screenCatalog {
 			_, cmd := m.updateCatalogMouse(msg)
 			return m, cmd
@@ -174,6 +181,9 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
+		}
+		if m.isCatalogOverlayOpen() {
+			return m, m.updateCatalogKey(msg)
 		}
 		if m.screen == screenCatalog {
 			return m, m.updateCatalogKey(msg)

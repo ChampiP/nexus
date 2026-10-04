@@ -32,21 +32,34 @@ func (m Model) modalHeight() int {
 
 // catalogLayout calcula todas las posiciones a partir del estado; es la única fuente de coordenadas.
 func (m Model) catalogLayout() catalogLayout {
-	width := m.width
+	if m.isCatalogOverlayOpen() {
+		if geo, ok := m.catalogOverlayGeometry(); ok {
+			return m.computeCatalogLayout(geo.innerWidth, geo.innerHeight, true)
+		}
+	}
+	return m.computeCatalogLayout(m.width, m.height, false)
+}
+
+// computeCatalogLayout dimensiona y distribuye los elementos del catálogo según el ancho y alto dados.
+func (m Model) computeCatalogLayout(width, height int, isOverlay bool) catalogLayout {
 	if width < 1 {
 		width = 80
 	}
-	l := catalogLayout{tabs: tabRects(m.screens()), headingY: 1, treeY: 2}
+	l := catalogLayout{headingY: 1, treeY: 2}
+	if !isOverlay {
+		l.tabs = tabRects(m.screens())
+	}
 	total := len(m.cat.rows)
 	modal := m.modalHeight()
 	l.visible = total
-	if m.height > 0 {
-		// Reservado: barra y encabezado, línea en blanco y dos acciones, área modal con su separador y el pie.
+	if height > 0 {
 		reserved := 2 + 3 + modal + 3
-		if modal > 0 {
+		if isOverlay {
+			reserved = 1 + 3 + modal
+		} else if modal > 0 {
 			reserved++
 		}
-		l.visible = min(total, max(3, m.height-reserved))
+		l.visible = min(total, max(3, height-reserved))
 	}
 	l.first = min(max(m.cat.scroll, 0), max(0, total-l.visible))
 	for i := 0; i < l.visible; i++ {

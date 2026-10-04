@@ -88,27 +88,15 @@ func (m Model) View() string {
 	if len(m.running) == 0 {
 		lines[layout.runningY+1] = label.Render("Aún no hay temporizadores activos")
 	}
-	today := "Hoy"
-	week := "Semana"
-	if !m.week {
-		today = "[ Hoy ]"
-	} else {
-		week = "[ Semana ]"
-	}
+	today := RenderPeriodOption("Hoy", !m.week, m.focus == focusToday)
+	week := RenderPeriodOption("Semana", m.week, m.focus == focusWeek)
 	if m.focus == focusToday {
 		today = "▸ " + today
 	}
 	if m.focus == focusWeek {
 		week = "▸ " + week
 	}
-	todayStyle, weekStyle := titleStyle, titleStyle
-	if m.focus == focusToday {
-		todayStyle = focusButton
-	}
-	if m.focus == focusWeek {
-		weekStyle = focusButton
-	}
-	lines[layout.tabsY] = todayStyle.Render(today) + "    " + weekStyle.Render(week)
+	lines[layout.tabsY] = today + "    " + week
 	dashboard := m.dashboardPanel(layout)
 	for i, line := range strings.Split(dashboard, "\n") {
 		y := layout.dashboardY + i
@@ -138,16 +126,13 @@ func (m Model) sessionAndTotal(entry tracking.Entry) string {
 	return session
 }
 
-// startLine dibuja [ Iniciar ] en la fila del formulario.
+// startLine dibuja el botón Iniciar como píldora en la fila del formulario.
 func startLine(focused bool) string {
 	mark := "  "
 	if focused {
 		mark = "▸ "
 	}
-	if focused {
-		return titleStyle.Render("▸ ") + focusButton.Render("[ Iniciar ]")
-	}
-	return lipgloss.NewStyle().Foreground(accent).Bold(true).Render(mark + "[ Iniciar ]")
+	return titleStyle.Render(mark) + RenderButton(" Iniciar ", focused)
 }
 
 // headerBase es la línea del encabezado sin el indicador de break: título, pestañas y resumen de hoy.

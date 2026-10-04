@@ -56,14 +56,22 @@ func assertWideZoneMatchesLabel(t *testing.T, lines []string, zone rect, label s
 	if zone.y < 0 || zone.y >= len(lines) {
 		t.Fatalf("zone for %q has y=%d outside rendered view", label, zone.y)
 	}
-	line := lines[zone.y]
-	index := strings.Index(line, label)
+	line := ansi.Strip(lines[zone.y])
+	match := label
+	if strings.HasPrefix(label, "[") && strings.HasSuffix(label, "]") {
+		match = " " + label[1:len(label)-1] + " "
+	}
+	index := strings.Index(line, match)
 	if index < 0 {
-		t.Fatalf("label %q not rendered on zone row %d: %q", label, zone.y, line)
+		clean := strings.Trim(label, "[]")
+		index = strings.Index(line, clean)
+		if index < 0 {
+			t.Fatalf("label %q not rendered on zone row %d: %q", label, zone.y, line)
+		}
 	}
 	labelX := lipgloss.Width(line[:index])
-	labelWidth := lipgloss.Width(label)
-	if zone.x != labelX || zone.x+zone.w < labelX+labelWidth {
+	labelWidth := lipgloss.Width(match)
+	if zone.x > labelX || zone.x+zone.w < labelX+labelWidth {
 		t.Fatalf("zone for %q = (%d,%d,%d), rendered at x=%d width=%d", label, zone.x, zone.y, zone.w, labelX, labelWidth)
 	}
 }

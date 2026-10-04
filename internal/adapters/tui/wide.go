@@ -87,7 +87,15 @@ func (g *wideNavigation) move(current navCell, column int, key tea.KeyType) (nav
 		}
 		target = grid.vertical(current, -1)
 	case tea.KeyDown:
-		target = grid.vertical(current, 1)
+		if current.kind == int(focusTabs) {
+			if g.hasLast[column] {
+				target = g.last[column]
+			} else {
+				target = grid[0].cells[0]
+			}
+		} else {
+			target = grid.vertical(current, 1)
+		}
 	case tea.KeyLeft, tea.KeyRight:
 		step := 1
 		if key == tea.KeyLeft {
@@ -214,7 +222,7 @@ func (m *Model) updateWideKey(key tea.KeyMsg) tea.Cmd {
 	}
 	if key.Type == tea.KeyEnter {
 		if m.focus == focusTabs {
-			m.switchScreen(screenCatalog)
+			m.openCatalogOverlay()
 			return nil
 		}
 		if m.wideColumn == 2 {
@@ -315,8 +323,11 @@ func (m Model) wideView(leftWidth, centerWidth, rightWidth int) string {
 	center := m.wideDashboard(centerWidth)
 	right := m.wideBreakPanels(rightWidth)
 	content := lipgloss.JoinHorizontal(lipgloss.Top, left, " ", center, " ", right)
-	header := m.headerBase(false) + "  " + renderTabs([]screen{screenCatalog}, screenCatalog, m.focus == focusTabs)
+	header := m.headerBase(false) + "  " + renderTabs([]screen{screenCatalog}, screenCatalog, m.focus == focusTabs || m.isCatalogOverlayOpen())
 	footer := m.hint()
+	if m.isCatalogOverlayOpen() {
+		footer = m.catalogHint()
+	}
 	if status, labels := m.statusBar(); status != "" || len(labels) > 0 {
 		line := lipgloss.NewStyle().Foreground(accent).Render(status)
 		if len(labels) > 0 {
@@ -324,7 +335,11 @@ func (m Model) wideView(leftWidth, centerWidth, rightWidth int) string {
 		}
 		footer = line + "\n" + footer
 	}
-	return header + "\n" + content + "\n\n" + label.Render(footer)
+	baseView := header + "\n" + content + "\n\n" + label.Render(footer)
+	if m.isCatalogOverlayOpen() {
+		return m.compositeCatalogOverlay(baseView)
+	}
+	return baseView
 }
 
 func widePanel(width int, heading, body string) string {
@@ -395,15 +410,13 @@ func (m Model) wideDashboard(width int) string {
 		period += item.Seconds
 	}
 	heading := fmt.Sprintf("HOY %s · SEMANA %s", formatDuration(m.todaySeconds), formatDuration(period))
-	today, week := "[ Hoy ]", "Semana"
-	if m.week {
-		today, week = "Hoy", "[ Semana ]"
-	}
+	today := RenderPeriodOption("Hoy", !m.week, m.focus == focusToday)
+	week := RenderPeriodOption("Semana", m.week, m.focus == focusWeek)
 	if m.focus == focusToday {
-		today = "▸ " + focusButton.Render(today)
+		today = "▸ " + today
 	}
 	if m.focus == focusWeek {
-		week = "▸ " + focusButton.Render(week)
+		week = "▸ " + week
 	}
 	periodSelector := today + "    " + week
 	lines := []string{titleStyle.Render(heading), periodSelector}

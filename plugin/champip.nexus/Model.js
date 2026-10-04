@@ -24,11 +24,67 @@ function liveTodaySeconds(todaySeconds, runningCount, sampledAtMs, nowMs) {
   return (Number(todaySeconds) || 0) + (Number(runningCount) || 0) * elapsed
 }
 
-// Bar label: a live clock with the timer count while something runs, calm hours/minutes when idle.
+// Etiqueta de la barra: reloj en vivo con el conteo de temporizadores activos; "0:00" en reposo.
 function barLabel(todaySeconds, runningCount) {
-  return runningCount > 0
-    ? "󱎫 " + runningCount + " · " + formatHMS(todaySeconds)
-    : "󱎫 " + formatDuration(todaySeconds)
+  var count = Number(runningCount) || 0
+  return count > 0
+    ? "󱎫 " + count + " · " + formatHMS(todaySeconds)
+    : "󱎫 0:00"
+}
+
+// Texto de ayuda: muestra el total del día cuando no hay tareas activas, o la lista en ejecución; añade sufijo si el estado no está actualizado.
+function barTooltip(todaySeconds, running, nowMs, stale) {
+  var isStale = stale
+  var now = nowMs
+  if (typeof nowMs === "boolean" && stale === undefined) {
+    isStale = nowMs
+    now = Date.now()
+  } else if (now === undefined) {
+    now = Date.now()
+  }
+  var list = Array.isArray(running) ? running : []
+  var text = ""
+  if (list.length === 0) {
+    text = "Hoy: " + formatDuration(todaySeconds) + " · sin temporizadores en curso"
+  } else {
+    text = list.map(function(entry) {
+      var title = String((entry && entry.title) || "")
+      var project = entry && entry.project ? " (" + entry.project + ")" : ""
+      var startedAt = entry && entry.started_at ? entry.started_at : now
+      return title + project + "  " + formatClock(startedAt, now)
+    }).join("\n")
+  }
+  if (isStale) {
+    text += " (sin actualizar)"
+  }
+  return text
+}
+
+// Conserva el estado anterior si la respuesta contiene un error no vacío.
+function applyStatus(prev, status) {
+  var prior = prev || {}
+  var priorRunning = Array.isArray(prior.running) ? prior.running : []
+  var priorToday = Number(prior.todaySeconds !== undefined ? prior.todaySeconds : prior.today_seconds) || 0
+  var payload = status || {}
+  var err = typeof payload.error === "string" ? payload.error.trim() : ""
+
+  if (err.length > 0) {
+    return {
+      running: priorRunning,
+      todaySeconds: priorToday,
+      stale: true,
+      error: err
+    }
+  }
+
+  var newRunning = Array.isArray(payload.running) ? payload.running : []
+  var newToday = Number(payload.today_seconds !== undefined ? payload.today_seconds : payload.todaySeconds) || 0
+  return {
+    running: newRunning,
+    todaySeconds: newToday,
+    stale: false,
+    error: ""
+  }
 }
 
 function pad(value) { return value < 10 ? "0" + value : String(value) }
@@ -62,5 +118,6 @@ function canCreateProject(projects, query) {
 if (typeof module !== "undefined") {
   module.exports = { formatDuration: formatDuration, formatClock: formatClock,
     formatHMS: formatHMS, liveTodaySeconds: liveTodaySeconds, barLabel: barLabel,
+    barTooltip: barTooltip, tooltipText: barTooltip, applyStatus: applyStatus,
     filterProjects: filterProjects, canCreateProject: canCreateProject }
 }
