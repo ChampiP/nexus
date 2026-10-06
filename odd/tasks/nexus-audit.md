@@ -24,9 +24,9 @@ Non-goals: new features, refactors beyond the fix, changing the activity-based p
 - [x] 3.5 Ctrl+Z restores stale deletions and steals text-input undo
 
 ## Batch 4 — catalog, trash, tasks
-- [ ] 4.1 Deleting a client/org fails with duplicate name (partial unique + ON DELETE SET NULL)
-- [ ] 4.2 Restore/RestoreTask revives stopped sessions or violates one-running-per-task
-- [ ] 4.3 EditTask returns a synthetic entry (EndedAt nil, StartedAt 0)
+- [x] 4.1 Deleting a client/org fails with duplicate name (partial unique + ON DELETE SET NULL)
+- [x] 4.2 Restore/RestoreTask revives stopped sessions or violates one-running-per-task (tracking v5 deleted_running; verify caught it missing from cmd/nexus orderedMigrations → fixed + guard test)
+- [x] 4.3 EditTask returns a synthetic entry (EndedAt nil, StartedAt 0)
 
 ## Batch 5 — migrations and remaining medium findings
 - [ ] 5.1 foreign_key_check runs after Commit (platform/db/migrate.go)

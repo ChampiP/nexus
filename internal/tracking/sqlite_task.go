@@ -83,7 +83,10 @@ func (s *SQLite) UpdateTask(taskUID string, entry Entry) error {
 
 // SoftDeleteTask elimina todas las sesiones vivas de la tarea en el mismo instante.
 func (s *SQLite) SoftDeleteTask(taskUID string, at int64) error {
-	result, err := s.db.Exec(`UPDATE entries SET ended_at = COALESCE(ended_at, ?), deleted_at = ? WHERE deleted_at IS NULL AND `+taskKey+` = ?`, at, at, taskUID)
+	result, err := s.db.Exec(`UPDATE entries SET
+		deleted_running = CASE WHEN ended_at IS NULL THEN 1 ELSE 0 END,
+		ended_at = COALESCE(ended_at, ?), deleted_at = ?
+		WHERE deleted_at IS NULL AND `+taskKey+` = ?`, at, at, taskUID)
 	return expectRow(result, err, "delete task")
 }
 
@@ -96,10 +99,21 @@ func (s *SQLite) RestoreTask(taskUID string, resumeSince int64) error {
 	if !at.Valid {
 		return ErrNotFound
 	}
-	// ended_at = deleted_at marca una sesión que estaba en curso cuando se borró.
 	result, err := s.db.Exec(`UPDATE entries SET
-		ended_at = CASE WHEN ended_at = deleted_at AND deleted_at >= ? THEN NULL ELSE ended_at END,
-		deleted_at = NULL
-		WHERE deleted_at = ? AND `+taskKey+` = ?`, resumeSince, at.Int64, taskUID)
+		ended_at = CASE WHEN id = (
+			SELECT candidate.id FROM entries AS candidate
+			WHERE candidate.deleted_at = ? AND COALESCE(candidate.task_uid, candidate.uid) = ? AND candidate.deleted_at >= ?
+			  AND (candidate.deleted_running = 1 OR
+				(candidate.deleted_running IS NULL AND candidate.ended_at = candidate.deleted_at))
+			ORDER BY CASE WHEN candidate.deleted_running = 1 THEN 0 ELSE 1 END,
+				candidate.started_at DESC, candidate.id DESC LIMIT 1
+		) AND NOT EXISTS (
+			SELECT 1 FROM entries AS active
+			WHERE COALESCE(active.task_uid, active.uid) = COALESCE(entries.task_uid, entries.uid)
+			  AND active.deleted_at IS NULL AND active.ended_at IS NULL
+		) THEN NULL ELSE ended_at END,
+		deleted_at = NULL,
+		deleted_running = NULL
+		WHERE deleted_at = ? AND `+taskKey+` = ?`, at.Int64, taskUID, resumeSince, at.Int64, taskUID)
 	return expectRow(result, err, "restore task")
 }

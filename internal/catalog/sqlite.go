@@ -291,6 +291,121 @@ func (s *SQLite) Client(id int64) (Client, error) {
 	return c, nil
 }
 
+// Organization returns an organization by id.
+func (s *SQLite) Organization(id int64) (Organization, error) {
+	var o Organization
+	var archived sql.NullInt64
+	err := s.db.QueryRow(`SELECT id, uid, name, archived_at FROM organizations WHERE id = ?`, id).Scan(&o.ID, &o.UID, &o.Name, &archived)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Organization{}, ErrNotFound
+	}
+	if err != nil {
+		return Organization{}, err
+	}
+	if archived.Valid {
+		o.ArchivedAt = &archived.Int64
+	}
+	return o, nil
+}
+
+func (s *SQLite) clientsForOrganization(id int64) ([]Client, error) {
+	rows, err := s.db.Query(`SELECT id, uid, name, organization_id, archived_at FROM clients WHERE organization_id = ? ORDER BY id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var clients []Client
+	for rows.Next() {
+		var c Client
+		var organizationID, archived sql.NullInt64
+		if err := rows.Scan(&c.ID, &c.UID, &c.Name, &organizationID, &archived); err != nil {
+			return nil, err
+		}
+		if organizationID.Valid {
+			c.OrganizationID = &organizationID.Int64
+		}
+		if archived.Valid {
+			c.ArchivedAt = &archived.Int64
+		}
+		clients = append(clients, c)
+	}
+	return clients, rows.Err()
+}
+
+func (s *SQLite) projectsForClient(id int64) ([]Project, error) {
+	rows, err := s.db.Query(`SELECT id, uid, name, client_id, archived_at FROM projects WHERE client_id = ? ORDER BY id`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var projects []Project
+	for rows.Next() {
+		var p Project
+		var clientID, archived sql.NullInt64
+		if err := rows.Scan(&p.ID, &p.UID, &p.Name, &clientID, &archived); err != nil {
+			return nil, err
+		}
+		if clientID.Valid {
+			p.ClientID = &clientID.Int64
+		}
+		if archived.Valid {
+			p.ArchivedAt = &archived.Int64
+		}
+		projects = append(projects, p)
+	}
+	return projects, rows.Err()
+}
+
+func (s *SQLite) deleteOrganization(id int64, renamed map[int64]string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for clientID, name := range renamed {
+		if _, err := tx.Exec(`UPDATE clients SET name = ? WHERE id = ? AND organization_id = ?`, name, clientID, id); err != nil {
+			return mapErr(err)
+		}
+	}
+	result, err := tx.Exec(`DELETE FROM organizations WHERE id = ?`, id)
+	if err != nil {
+		return mapErr(err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit()
+}
+
+func (s *SQLite) deleteClient(id int64, renamed map[int64]string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for projectID, name := range renamed {
+		if _, err := tx.Exec(`UPDATE projects SET name = ? WHERE id = ? AND client_id = ?`, name, projectID, id); err != nil {
+			return mapErr(err)
+		}
+	}
+	result, err := tx.Exec(`DELETE FROM clients WHERE id = ?`, id)
+	if err != nil {
+		return mapErr(err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit()
+}
+
 // Project returns a project by id.
 func (s *SQLite) Project(id int64) (Project, error) {
 	var p Project

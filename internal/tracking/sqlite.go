@@ -49,7 +49,33 @@ CREATE INDEX entries_project_id_idx ON entries(project_id);`)
 		}},
 		{Module: "tracking", Version: 3, Up: migrateTaskUID},
 		{Module: "tracking", Version: 4, Up: migrateIntegrity},
+		{Module: "tracking", Version: 5, Up: migrateDeletedRunning},
 	}
+}
+
+func migrateDeletedRunning(tx *sql.Tx) error {
+	rows, err := tx.Query(`PRAGMA table_info(entries)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, primaryKey int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return err
+		}
+		if name == "deleted_running" {
+			return rows.Err()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	_, err = tx.Exec(`ALTER TABLE entries ADD COLUMN deleted_running INTEGER NULL CHECK(deleted_running IN (0, 1))`)
+	return err
 }
 
 func migrateIntegrity(tx *sql.Tx) error {
@@ -385,16 +411,25 @@ func (s *SQLite) Update(entry Entry) error {
 
 // SoftDelete marks a live entry deleted, ending it at `at` if it was running.
 func (s *SQLite) SoftDelete(id, at int64) error {
-	result, err := s.db.Exec(`UPDATE entries SET ended_at = COALESCE(ended_at, ?), deleted_at = ? WHERE id = ? AND deleted_at IS NULL`, at, at, id)
+	result, err := s.db.Exec(`UPDATE entries SET
+		deleted_running = CASE WHEN ended_at IS NULL THEN 1 ELSE 0 END,
+		ended_at = COALESCE(ended_at, ?), deleted_at = ?
+		WHERE id = ? AND deleted_at IS NULL`, at, at, id)
 	return expectRow(result, err, "delete entry")
 }
 
 // Restore clears the deletion mark of a deleted entry.
 func (s *SQLite) Restore(id, resumeSince int64) error {
-	// ended_at = deleted_at marca una tarea que estaba en curso cuando se borró.
 	result, err := s.db.Exec(`UPDATE entries SET
-		ended_at = CASE WHEN ended_at = deleted_at AND deleted_at >= ? THEN NULL ELSE ended_at END,
-		deleted_at = NULL
+		ended_at = CASE WHEN deleted_at >= ?
+			AND (deleted_running = 1 OR (deleted_running IS NULL AND ended_at = deleted_at))
+			AND NOT EXISTS (
+				SELECT 1 FROM entries AS active
+				WHERE COALESCE(active.task_uid, active.uid) = COALESCE(entries.task_uid, entries.uid)
+				  AND active.deleted_at IS NULL AND active.ended_at IS NULL
+			) THEN NULL ELSE ended_at END,
+		deleted_at = NULL,
+		deleted_running = NULL
 		WHERE id = ? AND deleted_at IS NOT NULL`, resumeSince, id)
 	return expectRow(result, err, "restore entry")
 }

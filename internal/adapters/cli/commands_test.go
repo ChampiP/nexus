@@ -115,6 +115,16 @@ func TestEditEntry(t *testing.T) {
 	if entry["title"] != "Informe final" || entry["project"] != "Otro" || entry["description"] != "otra" || entry["uid"] == "" {
 		t.Fatalf("edit JSON = %#v", entry)
 	}
+	startedAt := entry["started_at"]
+	*a.now = a.now.Add(time.Minute)
+	a.mustRun(t, "stop", "1")
+	var stopped map[string]any
+	if err := json.Unmarshal([]byte(a.mustRun(t, "edit", "1", "-t", "Final", "--json")), &stopped); err != nil {
+		t.Fatal(err)
+	}
+	if stopped["started_at"] != startedAt || stopped["ended_at"] != float64(a.now.Unix()) {
+		t.Fatalf("stopped edit JSON timestamps = %#v; started_at was %v", stopped, startedAt)
+	}
 	_, err := a.run(t, "edit", "1", "-t", "  ")
 	wantErr(t, err, "el título no puede estar vacío")
 	_, err = a.run(t, "edit", "99", "-t", "x")

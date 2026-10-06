@@ -460,7 +460,11 @@ func (t *Tracker) EditTask(taskUID string, in EditInput) (Entry, error) {
 	found := false
 	for _, task := range tasks {
 		if task.TaskUID == taskUID {
-			latest, found = Entry{ID: task.LastEntryID, TaskUID: taskUID, Title: task.Title, Project: task.Project, ProjectID: task.ProjectID, Description: task.Description}, true
+			latest, err = t.repository.Get(task.LastEntryID)
+			if err != nil {
+				return Entry{}, fmt.Errorf("edit task: %w", err)
+			}
+			found = true
 			break
 		}
 	}

@@ -236,6 +236,7 @@ func orderedMigrations() []platformdb.Migration {
 		countdownSteps[1], // countdown v2: referencia entries
 		wellbeingSteps[0], // wellbeing v1
 		wellbeingSteps[1], // wellbeing v2: registro de eventos
+		trackingSteps[4],  // tracking v5: sesión en curso al borrarse
 	}
 }
 

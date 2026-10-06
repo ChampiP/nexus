@@ -23,6 +23,7 @@ import (
 	platformdb "nexus/internal/platform/db"
 	"nexus/internal/platform/presence"
 	"nexus/internal/tracking"
+	"nexus/internal/wellbeing"
 )
 
 type activityFixture map[string]string
@@ -215,7 +216,7 @@ func TestFreshDatabase(t *testing.T) {
 	}
 	defer db.Close()
 	applied, backup := upgrade(t, db, path)
-	if applied != 11 || backup != "" {
+	if applied != len(orderedMigrations()) || backup != "" {
 		t.Fatalf("applied = %d, backup = %q", applied, backup)
 	}
 	for file, want := range map[string]os.FileMode{filepath.Dir(path): 0o700, path: 0o600} {
@@ -229,7 +230,7 @@ func TestFreshDatabase(t *testing.T) {
 func TestLegacyDatabaseIsAdoptedWithoutLosingData(t *testing.T) {
 	db, path := legacyDB(t)
 	applied, backup := upgrade(t, db, path)
-	if applied != 11 || backup == "" {
+	if applied != len(orderedMigrations()) || backup == "" {
 		t.Fatalf("applied = %d, backup = %q", applied, backup)
 	}
 	old, err := sql.Open("sqlite", backup)
@@ -722,5 +723,22 @@ func TestCatalogProjectsAdapterReturnsErrAmbiguousProject(t *testing.T) {
 	name, err := adapter.ProjectName(1)
 	if err != nil || name != "SharedName" {
 		t.Fatalf("ProjectName(1) = %q, %v", name, err)
+	}
+}
+
+// Cada paso de cada módulo debe estar en la lista ordenada exactamente una vez; si no, la app real nunca lo aplica.
+func TestOrderedMigrationsIncludeEveryModuleStep(t *testing.T) {
+	want := map[string]int{}
+	for _, steps := range [][]platformdb.Migration{tracking.Migrations(), catalog.Migrations(), countdown.Migrations(), wellbeing.Migrations()} {
+		for _, s := range steps {
+			want[fmt.Sprintf("%s v%d", s.Module, s.Version)]++
+		}
+	}
+	got := map[string]int{}
+	for _, s := range orderedMigrations() {
+		got[fmt.Sprintf("%s v%d", s.Module, s.Version)]++
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("orderedMigrations = %v, want %v", got, want)
 	}
 }

@@ -57,7 +57,27 @@ func (s *Service) RenameOrganization(id int64, name string) error {
 
 // DeleteOrganization removes an organization; its clients remain without organization.
 func (s *Service) DeleteOrganization(id int64) error {
-	return s.repo.exec(`DELETE FROM organizations WHERE id = ?`, id)
+	org, err := s.repo.Organization(id)
+	if err != nil {
+		return err
+	}
+	clients, err := s.repo.clientsForOrganization(id)
+	if err != nil {
+		return err
+	}
+	renamed := make(map[int64]string)
+	reserved := make(map[string]bool)
+	for _, client := range clients {
+		name := client.Name
+		if s.repo.clientTaken(0, name, 0) {
+			name = uniqueName(client.Name+" ("+org.Name+")", func(candidate string) bool {
+				return s.repo.clientTaken(0, candidate, 0) || s.repo.clientTaken(id, candidate, client.ID) || reserved[strings.ToLower(candidate)]
+			})
+			renamed[client.ID] = name
+		}
+		reserved[strings.ToLower(name)] = true
+	}
+	return s.repo.deleteOrganization(id, renamed)
 }
 
 // CreateClient adds a client; organizationID 0 means no organization.
@@ -99,7 +119,34 @@ func (s *Service) MoveClient(clientID, organizationID int64) error {
 
 // DeleteClient removes a client; its projects remain without client.
 func (s *Service) DeleteClient(id int64) error {
-	return s.repo.exec(`DELETE FROM clients WHERE id = ?`, id)
+	client, err := s.repo.Client(id)
+	if err != nil {
+		return err
+	}
+	projects, err := s.repo.projectsForClient(id)
+	if err != nil {
+		return err
+	}
+	renamed := make(map[int64]string)
+	reserved := make(map[string]bool)
+	for _, project := range projects {
+		name := project.Name
+		if s.repo.ProjectNameTaken(name, 0, 0) {
+			name = uniqueName(project.Name+" ("+client.Name+")", func(candidate string) bool {
+				return s.repo.ProjectNameTaken(candidate, 0, 0) || s.repo.ProjectNameTaken(candidate, id, project.ID) || reserved[strings.ToLower(candidate)]
+			})
+			renamed[project.ID] = name
+		}
+		reserved[strings.ToLower(name)] = true
+	}
+	// El puerto de tracking usa otra conexión, por lo que actualizamos primero el texto legado;
+	// los cambios del catálogo (renombres y borrado) sí se confirman juntos en una transacción.
+	for projectID, name := range renamed {
+		if err := s.entries.RenameProject(projectID, name); err != nil {
+			return fmt.Errorf("rename project on entries: %w", err)
+		}
+	}
+	return s.repo.deleteClient(id, renamed)
 }
 
 // CreateProject adds a project; clientID 0 means no client.
@@ -193,6 +240,18 @@ func (s *Service) Tree() ([]TreeOrganization, error) { return s.repo.Tree() }
 
 // ProjectsNamed devuelve todos los proyectos con ese nombre (ignorando mayúsculas/minúsculas) en todos los clientes.
 func (s *Service) ProjectsNamed(name string) ([]Project, error) { return s.repo.ProjectsNamed(name) }
+
+func uniqueName(base string, taken func(string) bool) string {
+	if !taken(base) {
+		return base
+	}
+	for suffix := 2; ; suffix++ {
+		candidate := fmt.Sprintf("%s %d", base, suffix)
+		if !taken(candidate) {
+			return candidate
+		}
+	}
+}
 
 func derefID(id *int64) int64 {
 	if id == nil {

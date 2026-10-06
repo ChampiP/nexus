@@ -10,6 +10,7 @@ import (
 // fakeEntries records the calls the Service makes to the tracking side.
 type fakeEntries struct {
 	calls []string
+	names map[int64]string
 	err   error
 }
 
@@ -20,6 +21,9 @@ func (f *fakeEntries) Relink(fromID, toID int64, toName string) error {
 
 func (f *fakeEntries) RenameProject(id int64, name string) error {
 	f.calls = append(f.calls, fmt.Sprintf("rename %d %q", id, name))
+	if f.err == nil && f.names != nil {
+		f.names[id] = name
+	}
 	return f.err
 }
 
@@ -60,6 +64,23 @@ func TestOrganizationLifecycle(t *testing.T) {
 	}
 	if err := s.DeleteOrganization(999); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("delete missing = %v", err)
+	}
+}
+
+func TestDeleteOrganizationRenamesCollidingClients(t *testing.T) {
+	s, _ := newService(t)
+	org := must(s.CreateOrganization("Acme"))
+	colliding := must(s.CreateClient("Depilab", 0))
+	child := must(s.CreateClient("Depilab", org.ID))
+	if err := s.DeleteOrganization(org.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.repo.Client(child.ID)
+	if err != nil || got.Name != "Depilab (Acme)" || got.OrganizationID != nil {
+		t.Fatalf("client after delete = %+v, %v", got, err)
+	}
+	if got := must(s.repo.Client(colliding.ID)); got.Name != "Depilab" {
+		t.Fatalf("non-colliding client changed: %+v", got)
 	}
 }
 
@@ -125,6 +146,40 @@ func TestClientRulesPerOrganization(t *testing.T) {
 	}
 	if err := s.RenameClient(999, "x"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("rename missing = %v", err)
+	}
+}
+
+func TestDeleteClientRenamesCollidingProjectsAndEntries(t *testing.T) {
+	s, entries := newService(t)
+	a := must(s.CreateClient("A", 0))
+	b := must(s.CreateClient("B", 0))
+	c := must(s.CreateClient("C", 0))
+	projectA := must(s.CreateProject("Web", a.ID))
+	projectB := must(s.CreateProject("Web", b.ID))
+	projectC := must(s.CreateProject("Web", c.ID))
+	must(s.CreateProject("Web (C)", 0))
+	entries.names = map[int64]string{projectA.ID: "Web", projectB.ID: "Web", projectC.ID: "Web"}
+
+	if err := s.DeleteClient(a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteClient(b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteClient(c.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct {
+		id   int64
+		name string
+	}{{projectA.ID, "Web"}, {projectB.ID, "Web (B)"}, {projectC.ID, "Web (C) 2"}} {
+		got, err := s.repo.Project(want.id)
+		if err != nil || got.Name != want.name || got.ClientID != nil {
+			t.Fatalf("project %d after delete = %+v, %v; want %q", want.id, got, err, want.name)
+		}
+		if entries.names[want.id] != want.name {
+			t.Fatalf("entry project %d = %q, want %q", want.id, entries.names[want.id], want.name)
+		}
 	}
 }
 

@@ -52,6 +52,96 @@ func taskUIDs(t *testing.T, db *sql.DB) map[int64]string {
 	return out
 }
 
+func TestRestoreDoesNotReviveSessionStoppedAtDeleteSecond(t *testing.T) {
+	s, err := openSQLite(filepath.Join(t.TempDir(), "restore.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.db.Close()
+
+	entry, err := s.Insert(Entry{TaskUID: "task", Title: "task", StartedAt: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Stop(entry.ID, 20); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SoftDelete(entry.ID, 20); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Restore(entry.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(entry.ID)
+	if err != nil || got.EndedAt == nil || *got.EndedAt != 20 {
+		t.Fatalf("restored stopped entry = %+v, %v; want ended_at 20", got, err)
+	}
+}
+
+func TestRestoreTaskRevivesOnlySessionRunningAtDelete(t *testing.T) {
+	s, err := openSQLite(filepath.Join(t.TempDir(), "restore-task.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.db.Close()
+
+	stopped, err := s.Insert(Entry{TaskUID: "task", Title: "task", StartedAt: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Stop(stopped.ID, 20); err != nil {
+		t.Fatal(err)
+	}
+	running, err := s.Insert(Entry{TaskUID: "task", Title: "task", StartedAt: 15})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SoftDeleteTask("task", 20); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RestoreTask("task", 0); err != nil {
+		t.Fatal(err)
+	}
+	stoppedAfter, err := s.Get(stopped.ID)
+	if err != nil || stoppedAfter.EndedAt == nil || *stoppedAfter.EndedAt != 20 {
+		t.Fatalf("stopped session = %+v, %v; want ended_at 20", stoppedAfter, err)
+	}
+	runningAfter, err := s.Get(running.ID)
+	if err != nil || runningAfter.EndedAt != nil {
+		t.Fatalf("formerly running session = %+v, %v; want running", runningAfter, err)
+	}
+}
+
+func TestRestoreKeepsSessionStoppedWhenTaskAlreadyRunning(t *testing.T) {
+	s, err := openSQLite(filepath.Join(t.TempDir(), "restore-conflict.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.db.Close()
+
+	deleted, err := s.Insert(Entry{TaskUID: "task", Title: "task", StartedAt: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SoftDelete(deleted.ID, 20); err != nil {
+		t.Fatal(err)
+	}
+	active, err := s.Insert(Entry{TaskUID: "task", Title: "task", StartedAt: 21})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Restore(deleted.ID, 0); err != nil {
+		t.Fatalf("Restore with an active sibling: %v", err)
+	}
+	got, err := s.Get(deleted.ID)
+	if err != nil || got.EndedAt == nil || *got.EndedAt != 20 {
+		t.Fatalf("restored session = %+v, %v; want stopped at 20", got, err)
+	}
+	if _, err := s.Get(active.ID); err != nil {
+		t.Fatalf("active sibling: %v", err)
+	}
+}
+
 func TestMigrationV3GroupsIdenticalSessionsAndIsIdempotent(t *testing.T) {
 	db, path, all := openLegacy(t)
 	// Forma de los datos del usuario: #5 y #8 idénticos y detenidos, un break y una fila borrada.

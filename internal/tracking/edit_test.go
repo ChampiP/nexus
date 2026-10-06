@@ -104,6 +104,32 @@ func TestEditRunningEntryKeepsItRunningAndRelinksProject(t *testing.T) {
 	}
 }
 
+func TestEditTaskReturnsFullLatestStoppedEntry(t *testing.T) {
+	now := int64(100)
+	tracker, repo := newEditTracker(t, &now)
+	started, err := tracker.Start(StartInput{Title: "original"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = 200
+	if err := tracker.Stop(started.ID); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := repo.Get(started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := tracker.EditTask(started.TaskUID, EditInput{Title: ptr("actualizado")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Title != "actualizado" || got.StartedAt != stored.StartedAt || got.EndedAt == nil ||
+		stored.EndedAt == nil || *got.EndedAt != *stored.EndedAt || got.Kind != "work" {
+		t.Fatalf("EditTask returned %+v; stored session was %+v", got, stored)
+	}
+}
+
 func TestEditStoppedEntryAndErrors(t *testing.T) {
 	now := int64(100)
 	tracker, _ := newEditTracker(t, &now)
