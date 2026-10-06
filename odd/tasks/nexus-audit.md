@@ -5,7 +5,7 @@ Branch: fix/nexus-audit (from main 06253c6). One problem per worker, verify afte
 
 Non-goals: new features, refactors beyond the fix, changing the activity-based pause design.
 
-## Batch 1 — bar and CLI
+## Batch 1 — bar and CLI (commit d376c1c, verified)
 - [x] 1.1 Plugin: formatClock treats started_at (Unix seconds) as ms; projectArgv sends "#0" for id 0 (Model.js + Model.test.js)
 - [x] 1.2 StopAll also closes the running break row (tracking/sqlite.go) — keep breaks to countdown
 - [x] 1.3 `status --json` swallows Snapshot errors (bar shows 0); stop/ls/projects return plain errors in --json mode
