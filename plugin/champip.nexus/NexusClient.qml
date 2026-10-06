@@ -15,10 +15,16 @@ Item {
   property double sampledAtMs: Date.now()
   property string pendingProjectsQuery: ""
   property string activeProjectsQuery: ""
+  property bool pendingRefresh: false
+  property var actionQueue: []
   signal error(string message)
 
   function refresh() {
-    if (!statusProc.running) statusProc.running = true
+    if (statusProc.running) {
+      pendingRefresh = true
+      return
+    }
+    statusProc.running = true
   }
 
   // Inicia un nuevo temporizador construyendo el argv mediante Model.startArgv.
@@ -47,9 +53,16 @@ Item {
   }
 
   function runAction(argv, action) {
-    if (actionProc.running) return
-    actionKind = action
-    actionProc.command = argv
+    actionQueue = Model.enqueueAction(actionQueue, argv, action)
+    startNextAction()
+  }
+
+  function startNextAction() {
+    if (actionProc.running || actionQueue.length === 0) return
+    var next = Model.dequeueAction(actionQueue)
+    actionQueue = next.queue
+    actionKind = next.item.action
+    actionProc.command = next.item.argv
     actionProc.running = true
   }
 
@@ -93,6 +106,10 @@ Item {
         root.stale = true
         root.reportFailure("No se pudo consultar el estado de Nexus")
       }
+      if (root.pendingRefresh) {
+        root.pendingRefresh = false
+        root.refresh()
+      }
     }
   }
 
@@ -131,6 +148,7 @@ Item {
         } catch (e) { root.reportFailure("No se pudo leer la respuesta de Nexus") }
       }
       root.refresh()
+      root.startNextAction()
     }
   }
 }

@@ -191,10 +191,11 @@ marcados); los detenidos se recuerdan en `resume_entry_uids`. Cuando pasa la hor
 3. Nexus nunca reinicia los temporizadores de trabajo por su cuenta; puede que el usuario aún no haya vuelto.
 
 **Avisos de movimiento.** Una regla como "después de 50 minutos de trabajo continuo, sugiere
-moverte 5 minutos". Solo cuenta tiempo mientras corre un temporizador de trabajo y el usuario no
-está inactivo. Botones: **Hecho**, **En 10 min**, **Saltar**. Los avisos cumplidos se registran
-para un resumen semanal. De dónde sale la señal de inactividad (el servicio de inactividad de
-Omarchy o el protocolo de inactividad de Wayland) es una pregunta abierta.
+moverte 5 minutos". Cuenta el uso continuo de la computadora, corra o no un temporizador: el
+tiempo inactivo o con la pantalla bloqueada no cuenta, y una inactividad de 2 minutos o más
+reinicia la cuenta. Botones: **Hecho**, **En 10 min**, **Saltar**; solo **Hecho** cuenta como
+pausa cumplida (cerrar o ignorar el aviso no). La señal de inactividad viene de Omarchy
+(`omarchy-shell idle status` y `lock isLocked`); sin Omarchy se degrada a "nunca inactivo".
 
 ## 10. Integraciones
 

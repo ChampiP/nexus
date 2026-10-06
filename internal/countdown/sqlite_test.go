@@ -117,6 +117,35 @@ func TestIntegrityRulesAndMigrationRepair(t *testing.T) {
 	}
 }
 
+func TestSQLiteActiveAcceptsEmptyResumeEntryIDs(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nexus.db")
+	db, err := platformdb.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE entries (id INTEGER PRIMARY KEY)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := platformdb.Migrate(db, path, Migrations(), time.Now); err != nil {
+		t.Fatal(err)
+	}
+	s := NewSQLite(db)
+	b, err := s.Insert(Break{Label: "x", StartedAt: 1, EndsAt: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ids := range []string{"", " \t\n"} {
+		if _, err := db.Exec(`UPDATE countdowns SET resume_entry_ids = ? WHERE id = ?`, ids, b.ID); err != nil {
+			t.Fatal(err)
+		}
+		active, err := s.Active()
+		if err != nil || active == nil || len(active.ResumeEntryIDs) != 0 {
+			t.Fatalf("Active with resume_entry_ids %q = %+v, %v", ids, active, err)
+		}
+	}
+}
+
 func TestSQLiteDefaultsAndRoundTrip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "nexus.db")
 	db, err := platformdb.Open(path)

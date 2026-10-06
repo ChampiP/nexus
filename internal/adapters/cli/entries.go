@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,11 +19,19 @@ import (
 
 func runStart(args []string, tracker Tracker, cat Catalog, stdout io.Writer) error {
 	var input tracking.StartInput
-	jsonMode := contains(args, "--json")
+	options := args
+	if end := slices.Index(args, "--"); end >= 0 {
+		options = args[:end]
+	}
+	jsonMode := contains(options, "--json")
 	var titles []string
 	var projectRef string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
+		case "--":
+			// Fin de opciones: el resto es título, aunque empiece con guion.
+			titles = append(titles, args[i+1:]...)
+			i = len(args)
 		case "--json":
 			jsonMode = true
 		case "-p", "--project", "-d", "--description":
@@ -52,7 +61,7 @@ func runStart(args []string, tracker Tracker, cat Catalog, stdout io.Writer) err
 			if err != nil {
 				return commandError(err, jsonMode, stdout)
 			}
-			id, name, isNew, err := resolveProjectInput(projectRef, tree)
+			id, name, isNew, err := resolveWorkProjectInput(projectRef, tree)
 			if err != nil {
 				return commandError(err, jsonMode, stdout)
 			}
@@ -448,6 +457,10 @@ func parseArgs(args []string, valueFlags, boolFlags map[string]string) (parsedAr
 	parsed := parsedArgs{values: map[string]string{}, flags: map[string]bool{}}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
+		if arg == "--" {
+			parsed.positional = append(parsed.positional, args[i+1:]...)
+			break
+		}
 		if name, ok := valueFlags[arg]; ok {
 			if i+1 >= len(args) {
 				return parsed, fmt.Errorf("%s requiere un valor", arg)
@@ -502,7 +515,7 @@ func runEdit(args []string, tracker Tracker, cat Catalog, stdout io.Writer) erro
 			if err != nil {
 				return commandError(localize(err), jsonMode, stdout)
 			}
-			projID, projName, isNew, err := resolveProjectInput(v, tree)
+			projID, projName, isNew, err := resolveWorkProjectInput(v, tree)
 			if err != nil {
 				return commandError(localize(err), jsonMode, stdout)
 			}

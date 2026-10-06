@@ -2,6 +2,17 @@
 const assert = require("assert")
 const Model = require("./Model.js")
 
+// Las acciones en cola conservan el orden y los argv, sin mutar la cola previa.
+const initialQueue = []
+const queuedStart = Model.enqueueAction(initialQueue, ["nexus", "start", "Tarea"], "start")
+const queuedStop = Model.enqueueAction(queuedStart, ["nexus", "stop", "7", "--json"], "stop")
+assert.deepStrictEqual(initialQueue, [])
+assert.deepStrictEqual(Model.dequeueAction(queuedStop), {
+  item: { argv: ["nexus", "start", "Tarea"], action: "start" },
+  queue: [{ argv: ["nexus", "stop", "7", "--json"], action: "stop" }]
+})
+assert.deepStrictEqual(Model.dequeueAction([]), { item: null, queue: [] })
+
 assert.strictEqual(Model.formatHMS(22), "0:00:22")
 assert.strictEqual(Model.formatHMS(3725), "1:02:05")
 assert.strictEqual(Model.formatHMS(-3), "0:00:00")

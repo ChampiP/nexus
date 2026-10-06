@@ -292,11 +292,26 @@ func TestMigrateDisableForeignKeysRestoresPragmaEvenOnFailure(t *testing.T) {
 			},
 		},
 	}
-	_, _, err = Migrate(db, path, fkViolationMigrations, fixedNow)
+	fkPath := filepath.Join(t.TempDir(), "fk.db")
+	fkDB, err := Open(fkPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fkDB.Close()
+	exec(t, fkDB, `CREATE TABLE parent (id INTEGER PRIMARY KEY); CREATE TABLE child (id INTEGER, parent_id INTEGER REFERENCES parent(id));`)
+	_, _, err = Migrate(fkDB, fkPath, fkViolationMigrations, fixedNow)
 	if err == nil {
 		t.Fatal("se esperaba error por infracción de clave foránea")
 	}
-	if fk := getFK(); fk != 1 {
-		t.Fatalf("foreign_keys tras infracción FK = %d, want 1", fk)
+	var orphanRows, migrationRows int
+	if err := fkDB.QueryRow(`SELECT COUNT(*) FROM child WHERE id = 1`).Scan(&orphanRows); err != nil || orphanRows != 0 {
+		t.Fatalf("filas huérfanas tras infracción FK = %d, %v; want 0", orphanRows, err)
+	}
+	if err := fkDB.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE module = 'test' AND version = 2`).Scan(&migrationRows); err != nil || migrationRows != 0 {
+		t.Fatalf("filas de migración tras infracción FK = %d, %v; want 0", migrationRows, err)
+	}
+	var fk int
+	if err := fkDB.QueryRow(`PRAGMA foreign_keys`).Scan(&fk); err != nil || fk != 1 {
+		t.Fatalf("foreign_keys tras infracción FK = %d, %v; want 1", fk, err)
 	}
 }

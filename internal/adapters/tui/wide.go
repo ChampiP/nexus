@@ -186,13 +186,7 @@ func (m Model) wideGeometry() (wideGeometry, bool) {
 		buttons := buttonRects(y, g.leftContentX+left-4-buttonsWidth(entryLabels(runningActions)), entryLabels(runningActions))
 		g.runningRows = append(g.runningRows, rowZones{row: rect{g.leftContentX, y, left - 4, 1}, buttons: buttons})
 	}
-	g.today = rect{g.centerContentX, 3, lipgloss.Width("[ Hoy ]"), 1}
-	if m.week {
-		g.today.w = lipgloss.Width("Hoy")
-		g.week = rect{g.centerContentX + lipgloss.Width("Hoy    "), 3, lipgloss.Width("[ Semana ]"), 1}
-	} else {
-		g.week = rect{g.centerContentX + lipgloss.Width("[ Hoy ]    "), 3, lipgloss.Width("Semana"), 1}
-	}
+	g.today, g.week = periodRects(m, g.centerContentX, 3)
 	totalsLines := max(1, len(m.projectBars()))
 	recentY := 2 + 4 + totalsLines
 	for i := range m.recent {

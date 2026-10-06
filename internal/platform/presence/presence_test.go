@@ -3,6 +3,7 @@ package presence
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -72,6 +73,24 @@ func TestActivityParsesIdleAndLockState(t *testing.T) {
 				t.Fatalf("Activity() = %+v, %v; want %+v", got, err, tc.want)
 			}
 		})
+	}
+}
+
+func TestActivityFallbackMissingLockScript(t *testing.T) {
+	f := &fixture{
+		errors: map[string]error{
+			"omarchy-shell idle status":   errors.New("unavailable"),
+			"omarchy-shell lock isLocked": errors.New("unavailable"),
+			"/usr/share/omarchy/bin/omarchy-hyprland-session-locked": &exec.Error{
+				Name: "/usr/share/omarchy/bin/omarchy-hyprland-session-locked",
+				Err:  exec.ErrNotFound,
+			},
+		},
+	}
+
+	got, err := New(f).Activity(context.Background())
+	if err != nil || got.Locked || got.Idle {
+		t.Fatalf("Activity() = %+v, %v; want unlocked, non-idle state without error", got, err)
 	}
 }
 

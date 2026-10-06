@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"nexus/internal/countdown"
@@ -51,6 +52,7 @@ func RunWithWellbeing(ctx context.Context, breaks Breaks, notifier Notifier, ope
 	wait := &wellbeingWait{}
 	finished := make(chan struct{}, 1)
 	wellbeingFinished := make(chan struct{}, 1)
+	var workers sync.WaitGroup
 	check := func() {
 		if !wellbeingPending && service != nil && presenter != nil && busy != nil {
 			r, ok := service.Due(clock())
@@ -68,7 +70,9 @@ func RunWithWellbeing(ctx context.Context, breaks Breaks, notifier Notifier, ope
 					} else {
 						wellbeingPending = true
 						wait.since = time.Time{}
+						workers.Add(1)
 						go func(reminder wellbeing.Reminder) {
+							defer workers.Done()
 							defer func() { wellbeingFinished <- struct{}{} }()
 							showCtx, cancel := context.WithTimeout(sendCtx, reminder.Duration+60*time.Second)
 							defer cancel()
@@ -95,7 +99,9 @@ func RunWithWellbeing(ctx context.Context, breaks Breaks, notifier Notifier, ope
 			return
 		}
 		pending = true
+		workers.Add(1)
 		go func() {
+			defer workers.Done()
 			defer func() { finished <- struct{}{} }()
 			reply(sendCtx, breaks, notifier, open, notification(*b, now))
 		}()
@@ -105,6 +111,8 @@ func RunWithWellbeing(ctx context.Context, breaks Breaks, notifier Notifier, ope
 	for {
 		select {
 		case <-ctx.Done():
+			cancelSend()
+			workers.Wait()
 			return
 		case <-finished:
 			pending = false

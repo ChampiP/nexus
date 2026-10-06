@@ -9,13 +9,22 @@ import (
 
 // fakeEntries records the calls the Service makes to the tracking side.
 type fakeEntries struct {
-	calls []string
-	names map[int64]string
-	err   error
+	calls    []string
+	names    map[int64]string
+	links    map[int64]int64
+	err      error
+	onRename func(id int64, name string)
 }
 
 func (f *fakeEntries) Relink(fromID, toID int64, toName string) error {
 	f.calls = append(f.calls, fmt.Sprintf("relink %d %d %q", fromID, toID, toName))
+	if f.err == nil {
+		for entryID, projectID := range f.links {
+			if projectID == fromID {
+				f.links[entryID] = toID
+			}
+		}
+	}
 	return f.err
 }
 
@@ -23,6 +32,9 @@ func (f *fakeEntries) RenameProject(id int64, name string) error {
 	f.calls = append(f.calls, fmt.Sprintf("rename %d %q", id, name))
 	if f.err == nil && f.names != nil {
 		f.names[id] = name
+	}
+	if f.onRename != nil {
+		f.onRename(id, name)
 	}
 	return f.err
 }
@@ -266,6 +278,81 @@ func TestProjectCreateRenameMoveArchive(t *testing.T) {
 	}
 	if err := s.ArchiveProject(999); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("archive missing = %v", err)
+	}
+}
+
+// Si falla el borrado del origen, las entradas quedan en el destino (estado coherente y reintentable);
+// nunca se deshace el Relink, porque movería también las entradas que ya eran del destino.
+func TestMergeProjectsKeepsEntriesOnTargetWhenCatalogDeleteFails(t *testing.T) {
+	s, entries := newService(t)
+	from := must(s.CreateProject("From", 0))
+	into := must(s.CreateProject("Into", 0))
+	entries.links = map[int64]int64{1: from.ID, 2: into.ID}
+	if _, err := s.repo.db.Exec(`CREATE TRIGGER fail_project_delete BEFORE DELETE ON projects WHEN OLD.id = ` + fmt.Sprint(from.ID) + ` BEGIN SELECT RAISE(ABORT, 'delete failed'); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.MergeProjects(from.ID, into.ID); err == nil {
+		t.Fatal("expected catalog delete failure")
+	}
+	want := []string{fmt.Sprintf("relink %d %d %q", from.ID, into.ID, into.Name)}
+	if fmt.Sprint(entries.calls) != fmt.Sprint(want) {
+		t.Fatalf("entries calls = %v, want %v", entries.calls, want)
+	}
+	if _, err := s.repo.Project(from.ID); err != nil {
+		t.Fatalf("source project should remain: %v", err)
+	}
+	if entries.links[1] != into.ID || entries.links[2] != into.ID {
+		t.Fatalf("links = %v, want both on target %d", entries.links, into.ID)
+	}
+}
+
+func TestRenameProjectRestoresEntriesWhenNameCollidesAfterPrevalidation(t *testing.T) {
+	s, entries := newService(t)
+	client := must(s.CreateClient("Client", 0))
+	project := must(s.CreateProject("Before", client.ID))
+	entries.names = map[int64]string{project.ID: project.Name}
+	entries.onRename = func(id int64, name string) {
+		if id == project.ID && name == "After" {
+			entries.onRename = nil
+			must(s.CreateProject("After", client.ID))
+		}
+	}
+
+	err := s.RenameProject(project.ID, "After")
+	if !errors.Is(err, ErrDuplicateName) {
+		t.Fatalf("rename error = %v, want ErrDuplicateName", err)
+	}
+	if got := entries.names[project.ID]; got != project.Name {
+		t.Fatalf("entry project = %q, want restored name %q", got, project.Name)
+	}
+	if got := must(s.repo.Project(project.ID)); got.Name != project.Name {
+		t.Fatalf("catalog project = %+v, want original name %q", got, project.Name)
+	}
+}
+
+func TestDeleteClientRestoresCollidingProjectNamesWhenCatalogDeleteFails(t *testing.T) {
+	s, entries := newService(t)
+	client := must(s.CreateClient("Client", 0))
+	project := must(s.CreateProject("Web", client.ID))
+	must(s.CreateProject("Web", 0))
+	entries.names = map[int64]string{project.ID: project.Name}
+	if _, err := s.repo.db.Exec(`CREATE TRIGGER fail_client_delete BEFORE DELETE ON clients WHEN OLD.id = ` + fmt.Sprint(client.ID) + ` BEGIN SELECT RAISE(ABORT, 'delete failed'); END`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.DeleteClient(client.ID); err == nil {
+		t.Fatal("expected catalog delete failure")
+	}
+	if got := entries.names[project.ID]; got != project.Name {
+		t.Fatalf("entry project = %q, want restored name %q", got, project.Name)
+	}
+	want := []string{
+		fmt.Sprintf("rename %d %q", project.ID, "Web (Client)"),
+		fmt.Sprintf("rename %d %q", project.ID, project.Name),
+	}
+	if fmt.Sprint(entries.calls) != fmt.Sprint(want) {
+		t.Fatalf("entries calls = %v, want %v", entries.calls, want)
 	}
 }
 

@@ -3,7 +3,9 @@ package daemon
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -263,6 +265,14 @@ func TestCancelStopsAndCancelsPending(t *testing.T) {
 	}
 	if c := h.breaks.log(); len(c) != 1 {
 		t.Fatalf("no debía actuar tras cancelar: %v", c)
+	}
+}
+
+func TestLockPathFallbackIsUserSpecific(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	want := filepath.Join(os.TempDir(), "nexus-daemon-"+strconv.Itoa(os.Getuid())+".lock")
+	if got := LockPath(); got != want {
+		t.Fatalf("LockPath() = %q, want %q", got, want)
 	}
 }
 

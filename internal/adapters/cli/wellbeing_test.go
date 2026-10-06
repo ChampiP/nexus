@@ -83,6 +83,10 @@ func TestWellbeingCLIStatusSettingsAndActions(t *testing.T) {
 	if e != nil || !strings.Contains(out, `"dnd_until"`) {
 		t.Fatalf("json=%q err=%v", out, e)
 	}
+	out, e = run("--json")
+	if e != nil || !strings.Contains(out, `"dnd_until"`) {
+		t.Fatalf("pausa --json = %q err=%v", out, e)
+	}
 	if _, e = run("reanudar"); e != nil {
 		t.Fatal(e)
 	}

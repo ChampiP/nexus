@@ -35,6 +35,9 @@ func runWellbeing(args []string, svc Wellbeing, p PresenterBridge, now time.Time
 	if len(args) == 0 {
 		return showWellbeingStatus(svc, now, false, out)
 	}
+	if len(args) == 1 && args[0] == "--json" {
+		return showWellbeingStatus(svc, now, true, out)
+	}
 	sub := args[0]
 	rest := args[1:]
 	if sub == "estado" {

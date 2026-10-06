@@ -192,6 +192,27 @@ func TestRemainingAndOverdue(t *testing.T) {
 	}
 }
 
+func TestExtendRejectsNonPositiveDuration(t *testing.T) {
+	now := int64(1000)
+	s := newTestService(t, newFakeTimers(), &now)
+	if _, err := s.StartBreak(10*time.Minute, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.Active()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []time.Duration{0, -time.Minute} {
+		if err := s.Extend(d); !errors.Is(err, ErrInvalidDuration) {
+			t.Errorf("Extend(%v) = %v, want ErrInvalidDuration", d, err)
+		}
+	}
+	after, err := s.Active()
+	if err != nil || after.EndsAt != before.EndsAt {
+		t.Fatalf("ends_at changed from %d to %+v (err=%v)", before.EndsAt, after, err)
+	}
+}
+
 func TestExtendFromFutureAndPastDeadline(t *testing.T) {
 	now := int64(1000)
 	s := newTestService(t, newFakeTimers(), &now)

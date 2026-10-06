@@ -131,8 +131,7 @@ func (m Model) computeLayout() screenLayout {
 		l.running = append(l.running, rowZones{row: rect{0, rowY, width, 1}, buttons: rightButtonRects(rowY, width, entryLabels(runningActions))})
 	}
 	l.tabsY = l.runningY + 1 + visible + 1
-	l.today = rect{0, l.tabsY, 12, 1}
-	l.week = rect{13, l.tabsY, 12, 1}
+	l.today, l.week = periodRects(m, 0, l.tabsY)
 	l.dashboardY = l.tabsY + 2
 	l.fillDashboard(m, width)
 	return l
@@ -161,6 +160,24 @@ func (l *screenLayout) fillDashboard(m Model, width int) {
 	if text, labels := m.statusBar(); len(labels) > 0 {
 		l.statusButtons = buttonRects(l.statusY, lipgloss.Width(text), labels)
 	}
+}
+
+// periodRects ubica las opciones del período según el texto y el indicador dibujados.
+func periodRects(m Model, x, y int) (rect, rect) {
+	todayText := RenderPeriodOption("Hoy", !m.week, m.focus == focusToday)
+	weekText := RenderPeriodOption("Semana", m.week, m.focus == focusWeek)
+	todayX := x
+	if m.focus == focusToday {
+		todayX += lipgloss.Width("▸ ")
+	}
+	weekX := x + lipgloss.Width(todayText) + lipgloss.Width("    ")
+	if m.focus == focusToday {
+		weekX += lipgloss.Width("▸ ")
+	}
+	if m.focus == focusWeek {
+		weekX += lipgloss.Width("▸ ")
+	}
+	return rect{todayX, y, lipgloss.Width(todayText), 1}, rect{weekX, y, lipgloss.Width(weekText), 1}
 }
 
 // Etiquetas de las pestañas, indexadas por screen.

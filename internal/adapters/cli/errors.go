@@ -18,6 +18,8 @@ func localize(err error) error {
 		return errors.New("el temporizador no está en curso")
 	case errors.Is(err, tracking.ErrNotFound):
 		return errors.New("la tarea no existe")
+	case errors.Is(err, tracking.ErrInvalidKind):
+		return errors.New("solo se pueden reanudar tareas, no breaks")
 	case errors.Is(err, countdown.ErrBreakActive):
 		return errors.New("Ya hay un break en curso")
 	case errors.Is(err, countdown.ErrNoActiveBreak):

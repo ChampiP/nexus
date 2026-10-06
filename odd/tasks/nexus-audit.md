@@ -28,7 +28,14 @@ Non-goals: new features, refactors beyond the fix, changing the activity-based p
 - [x] 4.2 Restore/RestoreTask revives stopped sessions or violates one-running-per-task (tracking v5 deleted_running; verify caught it missing from cmd/nexus orderedMigrations → fixed + guard test)
 - [x] 4.3 EditTask returns a synthetic entry (EndedAt nil, StartedAt 0)
 
-## Batch 5 — migrations and remaining medium findings
-- [ ] 5.1 foreign_key_check runs after Commit (platform/db/migrate.go)
-- [ ] 5.2 Remaining medium findings (to be listed after batch 4)
-- [ ] 5.3 docs/ARCHITECTURE §9: pauses count computer use, not running timers
+## Batch 5 — remaining medium/low findings
+- [x] 5.1 migrate.go: foreign_key_check runs after Commit (move it before Commit)
+- [x] 5.2 catalog↔tracking: rename/merge/delete not atomic (entries text updated first; compensate or share a tx)
+- [x] 5.3 tracking: Resume accepts a break entry; TaskTotal misses kind='work'; Totals full scan; Projects GROUP BY not NOCASE
+- [x] 5.4 presence: wellbeing fails outside Omarchy (missing lock script → not locked)
+- [x] 5.5 countdown/daemon: Extend accepts <= 0; empty resume_entry_ids blocks break; daemon exits without waiting goroutines; /tmp lock without uid
+- [x] 5.6 CLI: `pausa --json`; client/project ambiguous across orgs; archived projects in resolution; `--` end of options; `--stop 3,3` duplicates; projectlist seen* not updated
+- [x] 5.7 Plugin: refresh lost while statusProc runs; runAction drops the action and clears the form
+- [x] 5.8 TUI: clampFocus uses the narrow layout in wide mode; hit-test offsets of [Empezar break] and [Semana]
+- [x] 5.9 Unicode case-insensitive names (ñ, accents) for duplicate detection and lookup
+- [x] 5.10 wellbeing: stale snoozed_until in status; docs/ARCHITECTURE §9 (pauses follow computer use)

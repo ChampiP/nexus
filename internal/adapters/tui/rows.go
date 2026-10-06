@@ -177,6 +177,9 @@ func (m *Model) clampFocus() {
 		m.runScroll = min(max(m.runScroll, 0), len(m.running)-1)
 	}
 	visible := len(m.computeLayout().recent)
+	if g, ok := m.wideGeometry(); ok {
+		visible = len(g.recent)
+	}
 	m.focusedRecent = min(max(m.focusedRecent, 0), max(0, visible-1))
 	switch {
 	case m.focus == focusRunningStart && len(m.running) == 0,

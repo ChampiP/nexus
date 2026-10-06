@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/oklog/ulid/v2"
 
@@ -111,8 +112,10 @@ func (s *SQLite) Active() (*Break, error) {
 	if err != nil {
 		return nil, fmt.Errorf("query active countdown: %w", err)
 	}
-	if err := json.Unmarshal([]byte(ids), &b.ResumeEntryIDs); err != nil {
-		return nil, fmt.Errorf("decode resume ids: %w", err)
+	if strings.TrimSpace(ids) != "" {
+		if err := json.Unmarshal([]byte(ids), &b.ResumeEntryIDs); err != nil {
+			return nil, fmt.Errorf("decode resume ids: %w", err)
+		}
 	}
 	if finished.Valid {
 		b.FinishedAt = &finished.Int64

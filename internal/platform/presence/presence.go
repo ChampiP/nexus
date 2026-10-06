@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os/exec"
 	"strings"
 	"time"
@@ -69,6 +70,8 @@ func (d *Detector) fallbackActivity(ctx context.Context) (State, error) {
 	state := State{Source: "fallback"}
 	if _, err := d.output(ctx, "/usr/share/omarchy/bin/omarchy-hyprland-session-locked"); err == nil {
 		state.Locked = true
+	} else if errors.Is(err, exec.ErrNotFound) || errors.Is(err, fs.ErrNotExist) {
+		state.Locked = false
 	} else if exit, ok := err.(interface{ ExitCode() int }); ok && exit.ExitCode() == 1 {
 		state.Locked = false
 	} else {

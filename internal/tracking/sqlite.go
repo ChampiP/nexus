@@ -292,7 +292,7 @@ func (s *SQLite) Recent(limit int) ([]Entry, error) {
 
 // Totals returns project durations since the timestamp, clipped at now.
 func (s *SQLite) Totals(since, now int64) ([]ProjectTotal, error) {
-	rows, err := s.db.Query(`SELECT COALESCE(project_id, 0), project, started_at, ended_at FROM entries WHERE deleted_at IS NULL AND kind = 'work' AND started_at < ?`, now)
+	rows, err := s.db.Query(`SELECT COALESCE(project_id, 0), project, started_at, ended_at FROM entries WHERE deleted_at IS NULL AND kind = 'work' AND started_at < ? AND (ended_at IS NULL OR ended_at > ?)`, now, since)
 	if err != nil {
 		return nil, fmt.Errorf("query totals: %w", err)
 	}
@@ -355,7 +355,7 @@ func (s *SQLite) Totals(since, now int64) ([]ProjectTotal, error) {
 
 // Projects returns per-project last-use times and accumulated durations.
 func (s *SQLite) Projects(now int64) ([]ProjectUsage, error) {
-	rows, err := s.db.Query(`SELECT COALESCE(project_id, 0), project, MAX(started_at), SUM(MAX(0, MIN(COALESCE(ended_at, ?), ?) - started_at)) FROM entries WHERE deleted_at IS NULL AND kind = 'work' AND (project_id IS NOT NULL OR project <> '') AND started_at <= ? GROUP BY CASE WHEN project_id IS NOT NULL THEN project_id ELSE 0 END, CASE WHEN project_id IS NULL THEN project ELSE '' END`, now, now, now)
+	rows, err := s.db.Query(`SELECT COALESCE(project_id, 0), project, MAX(started_at), SUM(MAX(0, MIN(COALESCE(ended_at, ?), ?) - started_at)) FROM entries WHERE deleted_at IS NULL AND kind = 'work' AND (project_id IS NOT NULL OR project <> '') AND started_at <= ? GROUP BY CASE WHEN project_id IS NOT NULL THEN project_id ELSE 0 END, CASE WHEN project_id IS NULL THEN project COLLATE NOCASE ELSE '' END`, now, now, now)
 	if err != nil {
 		return nil, fmt.Errorf("query projects: %w", err)
 	}

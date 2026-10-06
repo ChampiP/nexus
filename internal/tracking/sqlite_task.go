@@ -59,7 +59,7 @@ func (s *SQLite) RecentTasks(now int64, limit int) ([]TaskSummary, error) {
 // TaskTotal suma los segundos de las sesiones vivas de la tarea.
 func (s *SQLite) TaskTotal(taskUID string, now int64) (int64, error) {
 	var total int64
-	err := s.db.QueryRow(`SELECT COALESCE(SUM(MAX(0, COALESCE(ended_at, ?) - started_at)), 0) FROM entries WHERE deleted_at IS NULL AND `+taskKey+` = ?`, now, taskUID).Scan(&total)
+	err := s.db.QueryRow(`SELECT COALESCE(SUM(MAX(0, COALESCE(ended_at, ?) - started_at)), 0) FROM entries WHERE deleted_at IS NULL AND kind = 'work' AND `+taskKey+` = ?`, now, taskUID).Scan(&total)
 	if err != nil {
 		return 0, fmt.Errorf("query task total: %w", err)
 	}

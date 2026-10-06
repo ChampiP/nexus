@@ -17,7 +17,7 @@ func LockPath() string {
 	if dir == "" {
 		dir = os.TempDir()
 	}
-	return filepath.Join(dir, "nexus-daemon.lock")
+	return filepath.Join(dir, fmt.Sprintf("nexus-daemon-%d.lock", os.Getuid()))
 }
 
 // Lock toma un flock exclusivo no bloqueante sobre path y devuelve la función que lo libera.

@@ -106,10 +106,14 @@ func Build(tree []catalog.TreeOrganization, usage []tracking.ProjectUsage, query
 		if u.ProjectID > 0 {
 			if !seenID[u.ProjectID] && strings.TrimSpace(u.Name) != "" {
 				options = append(options, Option{ID: u.ProjectID, Name: u.Name, LastUsed: u.LastUsed, Seconds: u.Seconds})
+				seenID[u.ProjectID] = true
+				seenName[strings.ToLower(u.Name)] = true
 			}
 		} else {
-			if !seenName[strings.ToLower(u.Name)] && strings.TrimSpace(u.Name) != "" {
+			name := strings.ToLower(u.Name)
+			if !seenName[name] && strings.TrimSpace(u.Name) != "" {
 				options = append(options, Option{Name: u.Name, LastUsed: u.LastUsed, Seconds: u.Seconds})
+				seenName[name] = true
 			}
 		}
 	}

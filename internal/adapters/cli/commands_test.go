@@ -200,6 +200,44 @@ func TestOrganizationAndClientCommands(t *testing.T) {
 	wantErr(t, err, "ya existe una organización con ese nombre")
 }
 
+func TestProjectResolutionAcrossOrganizationsIsAmbiguous(t *testing.T) {
+	orgA := catalog.Organization{ID: 1, Name: "Org A"}
+	orgB := catalog.Organization{ID: 2, Name: "Org B"}
+	clientA := catalog.Client{ID: 1, Name: "Consultoría"}
+	clientB := catalog.Client{ID: 2, Name: "Consultoría"}
+	tree := []catalog.TreeOrganization{
+		{Organization: &orgA, Clients: []catalog.TreeClient{{Client: &clientA, Projects: []catalog.Project{{ID: 10, Name: "Web"}}}}},
+		{Organization: &orgB, Clients: []catalog.TreeClient{{Client: &clientB, Projects: []catalog.Project{{ID: 20, Name: "Web"}}}}},
+	}
+	_, _, _, err := resolveProjectInput("Consultoría/Web", tree)
+	if err == nil || !strings.Contains(err.Error(), "#10 Consultoría/Web") || !strings.Contains(err.Error(), "#20 Consultoría/Web") {
+		t.Fatalf("referencia cliente/proyecto ambigua: %v", err)
+	}
+}
+
+func TestArchivedProjectsAreExcludedFromWorkResolution(t *testing.T) {
+	archivedAt := int64(1)
+	tree := []catalog.TreeOrganization{{Clients: []catalog.TreeClient{{Projects: []catalog.Project{
+		{ID: 1, Name: "App", ArchivedAt: &archivedAt},
+		{ID: 2, Name: "App"},
+	}}}}}
+	id, _, isNew, err := resolveWorkProjectInput("App", tree)
+	if err != nil || isNew || id != 2 {
+		t.Fatalf("App activo = id %d, nuevo %v, error %v", id, isNew, err)
+	}
+	id, _, isNew, err = resolveWorkProjectInput("#1", tree)
+	if err != nil || isNew || id != 1 {
+		t.Fatalf("id archivado = %d, nuevo %v, error %v", id, isNew, err)
+	}
+	archivedOnly := []catalog.TreeOrganization{{Clients: []catalog.TreeClient{{Projects: []catalog.Project{{ID: 1, Name: "App", ArchivedAt: &archivedAt}}}}}}
+	if _, _, _, err := resolveWorkProjectInput("App", archivedOnly); err == nil || err.Error() != "el proyecto no existe" {
+		t.Fatalf("App archivado debía ignorarse: %v", err)
+	}
+	if _, err := (&index{tree: archivedOnly, projects: archivedOnly[0].Clients[0].Projects}).project("#1"); err != nil {
+		t.Fatalf("subcomando de proyecto no resuelve archivado por id: %v", err)
+	}
+}
+
 func TestProjectCommands(t *testing.T) {
 	a := newApp(t)
 	a.mustRun(t, "client", "add", "Globex")

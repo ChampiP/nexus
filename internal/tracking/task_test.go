@@ -289,6 +289,29 @@ func TestStartIsNewTaskAndResumeJoinsIt(t *testing.T) {
 	}
 }
 
+func TestTaskTotalExcludesBreakEntries(t *testing.T) {
+	now := int64(100)
+	tracker := newBreakTracker(t, &now)
+	work, err := tracker.Start(StartInput{Title: "Trabajo"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tracker.Stop(work.ID); err != nil {
+		t.Fatal(err)
+	}
+	brk, err := tracker.repository.Insert(Entry{TaskUID: work.TaskUID, Kind: KindBreak, Title: "Descanso", StartedAt: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tracker.repository.Stop(brk.ID, 80); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := tracker.TaskTotal(work.TaskUID); err != nil || got != 0 {
+		t.Fatalf("TaskTotal con solo break = %d, %v; quiero 0", got, err)
+	}
+}
+
 func TestRecentTasksTotalsOrderAndRunning(t *testing.T) {
 	now := int64(1000)
 	tracker := newBreakTracker(t, &now)

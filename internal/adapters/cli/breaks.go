@@ -210,10 +210,14 @@ func selectStop(value string, running []tracking.Entry) ([]tracking.Entry, error
 		return running, nil
 	}
 	var picked []tracking.Entry
+	seen := make(map[int64]bool)
 	for _, part := range strings.Split(value, ",") {
 		id, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64)
 		if err != nil {
 			return nil, fmt.Errorf("--stop acepta all, none o ids separados por comas (por ejemplo 3,5)")
+		}
+		if seen[id] {
+			continue
 		}
 		found := false
 		for _, e := range running {
@@ -225,6 +229,7 @@ func selectStop(value string, running []tracking.Entry) ([]tracking.Entry, error
 		if !found {
 			return nil, fmt.Errorf("el temporizador #%d no está en curso", id)
 		}
+		seen[id] = true
 	}
 	return picked, nil
 }

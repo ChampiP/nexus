@@ -65,6 +65,19 @@ func TestBuildKeepsUsageOnlyProjectsAndNeverUsedByName(t *testing.T) {
 	}
 }
 
+func TestBuildDeduplicatesUsageOnlyProjects(t *testing.T) {
+	usage := []tracking.ProjectUsage{
+		{ProjectID: 10, Name: "Proyecto", LastUsed: 1},
+		{ProjectID: 10, Name: "PROYECTO", LastUsed: 2},
+		{Name: "Suelto", LastUsed: 1},
+		{Name: "SUELTO", LastUsed: 2},
+	}
+	got := Build(nil, usage, "")
+	if len(got) != 2 {
+		t.Fatalf("proyectos de uso = %+v; se esperaban 2", got)
+	}
+}
+
 func TestBuildFiltersByProjectOrClientName(t *testing.T) {
 	if got := names(Build(sampleTree(), nil, "lumi")); !reflect.DeepEqual(got, []string{"Lumirecon"}) {
 		t.Fatalf("por proyecto = %v", got)

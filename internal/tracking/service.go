@@ -171,6 +171,9 @@ func (t *Tracker) Resume(id int64) (Entry, error) {
 	if err != nil {
 		return Entry{}, fmt.Errorf("resume entry #%d: %w", id, err)
 	}
+	if src.Kind != KindWork {
+		return Entry{}, ErrInvalidKind
+	}
 	if running, ok, err := t.repository.RunningInTask(src.TaskUID); err != nil {
 		return Entry{}, fmt.Errorf("resume entry #%d: %w", id, err)
 	} else if ok {

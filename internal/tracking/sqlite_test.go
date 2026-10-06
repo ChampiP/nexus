@@ -238,6 +238,69 @@ func TestRecentTotalsAndProjectUsage(t *testing.T) {
 	}
 }
 
+func TestTotalsClipsEntriesAcrossSinceBoundary(t *testing.T) {
+	s, err := openSQLite(filepath.Join(t.TempDir(), "nexus.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.db.Close()
+
+	before, err := s.Insert(Entry{Title: "before", Project: "P", StartedAt: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Stop(before.ID, 20); err != nil {
+		t.Fatal(err)
+	}
+	boundary, err := s.Insert(Entry{Title: "boundary", Project: "P", StartedAt: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Stop(boundary.ID, 30); err != nil {
+		t.Fatal(err)
+	}
+	crossing, err := s.Insert(Entry{Title: "crossing", Project: "P", StartedAt: 15})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Stop(crossing.ID, 25); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.Totals(20, 30)
+	if err != nil || len(got) != 1 || got[0].Seconds != 15 {
+		t.Fatalf("Totals(20, 30) = %+v, %v; quiero 15 segundos", got, err)
+	}
+}
+
+func TestProjectsGroupsUnlinkedNamesCaseInsensitively(t *testing.T) {
+	s, err := openSQLite(filepath.Join(t.TempDir(), "nexus.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.db.Close()
+	for _, item := range []struct {
+		name       string
+		start, end int64
+	}{
+		{name: "Nexus", start: 10, end: 20},
+		{name: "nexus", start: 30, end: 40},
+	} {
+		entry, err := s.Insert(Entry{Title: item.name, Project: item.name, StartedAt: item.start})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Stop(entry.ID, item.end); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := s.Projects(50)
+	if err != nil || len(got) != 1 || got[0].Seconds != 20 || got[0].Name != "nexus" {
+		t.Fatalf("Projects() = %+v, %v; quiero un grupo de 20 segundos llamado nexus", got, err)
+	}
+}
+
 func TestStopUnknownID(t *testing.T) {
 	s, err := openSQLite(filepath.Join(t.TempDir(), "nexus.db"))
 	if err != nil {

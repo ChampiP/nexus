@@ -124,39 +124,34 @@ func (s *SQLite) EnsureProject(name string, clientID ...int64) (Project, error) 
 	}
 
 	cid := clientID[0]
-	var p Project
-	var client, archived sql.NullInt64
-	err = s.db.QueryRow(`SELECT id, uid, name, client_id, archived_at FROM projects WHERE name = ? COLLATE NOCASE AND client_id IS NULLIF(?, 0)`, name, cid).Scan(&p.ID, &p.UID, &p.Name, &client, &archived)
-	if err == nil {
-		if client.Valid {
-			p.ClientID = &client.Int64
-		}
-		if archived.Valid {
-			p.ArchivedAt = &archived.Int64
-		}
-		return p, nil
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Project{}, err
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	defer tx.Rollback()
+	projects, err := projectsNamedIn(tx, name, cid, true)
+	if err != nil {
 		return Project{}, fmt.Errorf("find project: %w", err)
 	}
-
-	id, uid, err := s.create(`INSERT INTO projects(uid, name, client_id) VALUES (?, ?, NULLIF(?, 0))`, name, cid)
-	if err != nil {
-		if errors.Is(err, ErrDuplicateName) {
-			err = s.db.QueryRow(`SELECT id, uid, name, client_id, archived_at FROM projects WHERE name = ? COLLATE NOCASE AND client_id IS NULLIF(?, 0)`, name, cid).Scan(&p.ID, &p.UID, &p.Name, &client, &archived)
-			if err == nil {
-				if client.Valid {
-					p.ClientID = &client.Int64
-				}
-				if archived.Valid {
-					p.ArchivedAt = &archived.Int64
-				}
-				return p, nil
-			}
+	if len(projects) > 0 {
+		if err := tx.Commit(); err != nil {
+			return Project{}, err
 		}
-		return Project{}, fmt.Errorf("create project: %w", err)
+		return projects[0], nil
 	}
-	p = Project{ID: id, UID: uid, Name: name}
+	uid := ulid.Make().String()
+	result, err := tx.Exec(`INSERT INTO projects(uid, name, client_id) VALUES (?, ?, NULLIF(?, 0))`, uid, name, cid)
+	if err != nil {
+		return Project{}, fmt.Errorf("create project: %w", mapErr(err))
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return Project{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Project{}, err
+	}
+	p := Project{ID: id, UID: uid, Name: name}
 	if cid != 0 {
 		p.ClientID = &cid
 	}
@@ -165,7 +160,23 @@ func (s *SQLite) EnsureProject(name string, clientID ...int64) (Project, error) 
 
 // ProjectsNamed devuelve todos los proyectos con ese nombre (ignorando mayúsculas/minúsculas) en todos los clientes.
 func (s *SQLite) ProjectsNamed(name string) ([]Project, error) {
-	rows, err := s.db.Query(`SELECT id, uid, name, client_id, archived_at FROM projects WHERE name = ? COLLATE NOCASE ORDER BY id`, name)
+	return projectsNamedIn(s.db, name, 0, false)
+}
+
+func projectsNamedIn(q interface {
+	Query(string, ...any) (*sql.Rows, error)
+}, name string, clientID int64, scoped bool) ([]Project, error) {
+	query := `SELECT id, uid, name, client_id, archived_at FROM projects ORDER BY id`
+	if scoped {
+		query = `SELECT id, uid, name, client_id, archived_at FROM projects WHERE client_id IS NULLIF(?, 0) ORDER BY id`
+	}
+	var rows *sql.Rows
+	var err error
+	if scoped {
+		rows, err = q.Query(query, clientID)
+	} else {
+		rows, err = q.Query(query)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +194,9 @@ func (s *SQLite) ProjectsNamed(name string) ([]Project, error) {
 		if archived.Valid {
 			p.ArchivedAt = &archived.Int64
 		}
-		projects = append(projects, p)
+		if strings.EqualFold(p.Name, name) {
+			projects = append(projects, p)
+		}
 	}
 	return projects, rows.Err()
 }
@@ -233,42 +246,266 @@ func (s *SQLite) create(query string, args ...any) (int64, string, error) {
 
 // CreateOrganization inserts an organization.
 func (s *SQLite) CreateOrganization(name string) (Organization, error) {
-	id, uid, err := s.create(`INSERT INTO organizations(uid, name) VALUES (?, ?)`, name)
-	return Organization{ID: id, UID: uid, Name: name}, err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Organization{}, err
+	}
+	defer tx.Rollback()
+	taken, err := nameTaken(tx, `SELECT id, name FROM organizations`, nil, name, 0)
+	if err != nil {
+		return Organization{}, err
+	}
+	if taken {
+		return Organization{}, ErrDuplicateName
+	}
+	uid := ulid.Make().String()
+	result, err := tx.Exec(`INSERT INTO organizations(uid, name) VALUES (?, ?)`, uid, name)
+	if err != nil {
+		return Organization{}, mapErr(err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return Organization{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Organization{}, err
+	}
+	return Organization{ID: id, UID: uid, Name: name}, nil
 }
 
 // CreateClient inserts a client; organizationID 0 means none.
 func (s *SQLite) CreateClient(name string, organizationID int64) (Client, error) {
-	if s.clientTaken(organizationID, name, 0) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Client{}, err
+	}
+	defer tx.Rollback()
+	taken, err := nameTaken(tx, `SELECT id, name FROM clients WHERE organization_id IS NULLIF(?, 0)`, []any{organizationID}, name, 0)
+	if err != nil {
+		return Client{}, err
+	}
+	if taken {
 		return Client{}, ErrDuplicateName
 	}
-	id, uid, err := s.create(`INSERT INTO clients(uid, name, organization_id) VALUES (?, ?, NULLIF(?, 0))`, name, organizationID)
+	uid := ulid.Make().String()
+	result, err := tx.Exec(`INSERT INTO clients(uid, name, organization_id) VALUES (?, ?, NULLIF(?, 0))`, uid, name, organizationID)
+	if err != nil {
+		return Client{}, mapErr(err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return Client{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Client{}, err
+	}
 	c := Client{ID: id, UID: uid, Name: name}
 	if organizationID != 0 {
 		c.OrganizationID = &organizationID
 	}
-	return c, err
+	return c, nil
 }
 
 // CreateProject inserta un proyecto; clientID 0 significa sin cliente.
 func (s *SQLite) CreateProject(name string, clientID int64) (Project, error) {
-	if s.ProjectNameTaken(name, clientID, 0) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return Project{}, err
+	}
+	defer tx.Rollback()
+	taken, err := nameTaken(tx, `SELECT id, name FROM projects WHERE client_id IS NULLIF(?, 0)`, []any{clientID}, name, 0)
+	if err != nil {
+		return Project{}, err
+	}
+	if taken {
 		return Project{}, ErrDuplicateName
 	}
-	id, uid, err := s.create(`INSERT INTO projects(uid, name, client_id) VALUES (?, ?, NULLIF(?, 0))`, name, clientID)
+	uid := ulid.Make().String()
+	result, err := tx.Exec(`INSERT INTO projects(uid, name, client_id) VALUES (?, ?, NULLIF(?, 0))`, uid, name, clientID)
+	if err != nil {
+		return Project{}, mapErr(err)
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return Project{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Project{}, err
+	}
 	p := Project{ID: id, UID: uid, Name: name}
 	if clientID != 0 {
 		p.ClientID = &clientID
 	}
-	return p, err
+	return p, nil
+}
+
+func (s *SQLite) renameOrganization(id int64, name string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	taken, err := nameTaken(tx, `SELECT id, name FROM organizations`, nil, name, id)
+	if err != nil {
+		return err
+	}
+	if taken {
+		return ErrDuplicateName
+	}
+	if err := execTx(tx, `UPDATE organizations SET name = ? WHERE id = ?`, name, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SQLite) renameClient(id int64, name string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var org sql.NullInt64
+	if err := tx.QueryRow(`SELECT organization_id FROM clients WHERE id = ?`, id).Scan(&org); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	orgID := int64(0)
+	if org.Valid {
+		orgID = org.Int64
+	}
+	taken, err := nameTaken(tx, `SELECT id, name FROM clients WHERE organization_id IS NULLIF(?, 0)`, []any{orgID}, name, id)
+	if err != nil {
+		return err
+	}
+	if taken {
+		return ErrDuplicateName
+	}
+	if err := execTx(tx, `UPDATE clients SET name = ? WHERE id = ?`, name, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SQLite) moveClient(id, organizationID int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var name string
+	if err := tx.QueryRow(`SELECT name FROM clients WHERE id = ?`, id).Scan(&name); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	taken, err := nameTaken(tx, `SELECT id, name FROM clients WHERE organization_id IS NULLIF(?, 0)`, []any{organizationID}, name, id)
+	if err != nil {
+		return err
+	}
+	if taken {
+		return ErrDuplicateName
+	}
+	if err := execTx(tx, `UPDATE clients SET organization_id = NULLIF(?, 0) WHERE id = ?`, organizationID, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SQLite) renameProject(id int64, name string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var client sql.NullInt64
+	if err := tx.QueryRow(`SELECT client_id FROM projects WHERE id = ?`, id).Scan(&client); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	clientID := int64(0)
+	if client.Valid {
+		clientID = client.Int64
+	}
+	taken, err := nameTaken(tx, `SELECT id, name FROM projects WHERE client_id IS NULLIF(?, 0)`, []any{clientID}, name, id)
+	if err != nil {
+		return err
+	}
+	if taken {
+		return ErrDuplicateName
+	}
+	if err := execTx(tx, `UPDATE projects SET name = ? WHERE id = ?`, name, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *SQLite) moveProject(id, clientID int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var name string
+	if err := tx.QueryRow(`SELECT name FROM projects WHERE id = ?`, id).Scan(&name); errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	taken, err := nameTaken(tx, `SELECT id, name FROM projects WHERE client_id IS NULLIF(?, 0)`, []any{clientID}, name, id)
+	if err != nil {
+		return err
+	}
+	if taken {
+		return ErrDuplicateName
+	}
+	if err := execTx(tx, `UPDATE projects SET client_id = NULLIF(?, 0) WHERE id = ?`, clientID, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func execTx(tx *sql.Tx, query string, args ...any) error {
+	result, err := tx.Exec(query, args...)
+	if err != nil {
+		return mapErr(err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // clientTaken reports whether another client (not exceptID) already has name in the organization.
-// The unique index cannot catch this for clients without organization (NULLs compare distinct).
 func (s *SQLite) clientTaken(organizationID int64, name string, exceptID int64) bool {
-	var one int
-	err := s.db.QueryRow(`SELECT 1 FROM clients WHERE organization_id IS NULLIF(?, 0) AND name = ? COLLATE NOCASE AND id <> ?`, organizationID, name, exceptID).Scan(&one)
-	return err == nil
+	taken, err := nameTaken(s.db, `SELECT id, name FROM clients WHERE organization_id IS NULLIF(?, 0)`, []any{organizationID}, name, exceptID)
+	return err == nil && taken
+}
+
+func nameTaken(q interface {
+	Query(string, ...any) (*sql.Rows, error)
+}, query string, args []any, name string, exceptID int64) (bool, error) {
+	rows, err := q.Query(query, args...)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		var existing string
+		if err := rows.Scan(&id, &existing); err != nil {
+			return false, err
+		}
+		if id != exceptID && strings.EqualFold(existing, name) {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
 
 // Client returns a client by id.
@@ -428,9 +665,8 @@ func (s *SQLite) Project(id int64) (Project, error) {
 
 // ProjectNameTaken comprueba si ya existe otro proyecto con ese nombre bajo el mismo cliente (o sin cliente si clientID es 0).
 func (s *SQLite) ProjectNameTaken(name string, clientID int64, exceptID int64) bool {
-	var one int
-	err := s.db.QueryRow(`SELECT 1 FROM projects WHERE client_id IS NULLIF(?, 0) AND name = ? COLLATE NOCASE AND id <> ?`, clientID, name, exceptID).Scan(&one)
-	return err == nil
+	taken, err := nameTaken(s.db, `SELECT id, name FROM projects WHERE client_id IS NULLIF(?, 0)`, []any{clientID}, name, exceptID)
+	return err == nil && taken
 }
 
 // Tree reads the whole catalog grouped organization > client > project, ordered by name.

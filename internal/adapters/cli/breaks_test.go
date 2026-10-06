@@ -126,6 +126,15 @@ func TestBreakWithoutTimersNeedsNoStopAndDefaultsTo60(t *testing.T) {
 	}
 }
 
+func TestBreakStopDeduplicatesIDs(t *testing.T) {
+	a := newBreakApp(t)
+	a.twoTimers(t)
+	wantOut(t, a.must(t, "break", "30", "--stop", "2,2"), "Break de 30 min hasta las 15:30 · detenidos: #2 Diseño\n")
+	if running, _, _, _ := a.tracker.Snapshot(); len(running) != 1 || running[0].Title != "Informe" {
+		t.Fatalf("temporizadores en curso = %+v", running)
+	}
+}
+
 func TestBreakStopRejectsNonRunningID(t *testing.T) {
 	a := newBreakApp(t)
 	a.twoTimers(t)

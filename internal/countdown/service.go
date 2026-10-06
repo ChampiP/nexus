@@ -82,6 +82,9 @@ func (s *Service) Active() (*Break, error) { return s.repo.Active() }
 
 // Extend retrasa la fecha límite desde el mayor entre ahora y la fecha actual.
 func (s *Service) Extend(d time.Duration) error {
+	if d <= 0 {
+		return ErrInvalidDuration
+	}
 	b, err := s.active()
 	if err != nil {
 		return err

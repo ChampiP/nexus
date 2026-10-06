@@ -184,6 +184,22 @@ function projectArgv(project) {
   return ["-p", name]
 }
 
+// Agrega una acción al final de la cola, conservando la cola y los argv originales.
+function enqueueAction(queue, argv, action) {
+  var result = Array.isArray(queue) ? queue.slice() : []
+  result.push({ argv: Array.isArray(argv) ? argv.slice() : [], action: String(action || "") })
+  return result
+}
+
+// Extrae la siguiente acción de la cola sin modificarla.
+function dequeueAction(queue) {
+  var list = Array.isArray(queue) ? queue : []
+  return {
+    item: list.length ? list[0] : null,
+    queue: list.slice(1)
+  }
+}
+
 // Construye los argumentos completos para "nexus start".
 function startArgv(title, project, description) {
   var args = ["nexus", "start", String(title || "")]
@@ -211,6 +227,8 @@ if (typeof module !== "undefined") {
     buildProjectOptions: projectOptions,
     projectArgv: projectArgv,
     buildProjectArgs: projectArgv,
+    enqueueAction: enqueueAction,
+    dequeueAction: dequeueAction,
     startArgv: startArgv
   }
 }

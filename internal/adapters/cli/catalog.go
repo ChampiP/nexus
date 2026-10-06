@@ -27,6 +27,11 @@ type index struct {
 	tree     []catalog.TreeOrganization
 }
 
+type projectMatch struct {
+	p      catalog.Project
+	client string
+}
+
 func loadIndex(c Catalog) (*index, error) {
 	tree, err := c.Tree()
 	if err != nil {
@@ -52,6 +57,46 @@ func loadIndex(c Catalog) (*index, error) {
 // - "cliente/proyecto" (o "-/proyecto" sin cliente) -> por cliente y nombre
 // - nombre simple -> coincidencia única, error con candidatos si es ambiguo, o nuevo nombre si no existe
 func resolveProjectInput(ref string, tree []catalog.TreeOrganization) (projectID int64, projectName string, isNewBareName bool, err error) {
+	return resolveProjectInputWithArchived(ref, tree, true)
+}
+
+// resolveWorkProjectInput omite proyectos archivados para start/edit, salvo las referencias explícitas por id.
+func resolveWorkProjectInput(ref string, tree []catalog.TreeOrganization) (projectID int64, projectName string, isNewBareName bool, err error) {
+	id, name, isNew, err := resolveProjectInputWithArchived(ref, tree, false)
+	if err != nil || !isNew {
+		return id, name, isNew, err
+	}
+	if archivedProjectMatches(ref, tree) {
+		return 0, "", false, errors.New("el proyecto no existe")
+	}
+	return id, name, true, nil
+}
+
+func archivedProjectMatches(ref string, tree []catalog.TreeOrganization) bool {
+	trimmed := strings.TrimSpace(ref)
+	clientName, projectName, qualified := strings.Cut(trimmed, "/")
+	for _, org := range tree {
+		for _, client := range org.Clients {
+			if qualified {
+				clientName = strings.TrimSpace(clientName)
+				matchesClient := clientName == "-" && client.Client == nil || clientName != "-" && client.Client != nil && strings.EqualFold(client.Client.Name, clientName)
+				if !matchesClient {
+					continue
+				}
+			} else {
+				projectName = trimmed
+			}
+			for _, project := range client.Projects {
+				if project.ArchivedAt != nil && strings.EqualFold(project.Name, strings.TrimSpace(projectName)) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func resolveProjectInputWithArchived(ref string, tree []catalog.TreeOrganization, includeArchived bool) (projectID int64, projectName string, isNewBareName bool, err error) {
 	trimmed := strings.TrimSpace(ref)
 	if trimmed == "" {
 		return 0, "", false, errors.New("el proyecto no existe")
@@ -85,36 +130,36 @@ func resolveProjectInput(ref string, tree []catalog.TreeOrganization) (projectID
 	if clientPart, projPart, ok := strings.Cut(trimmed, "/"); ok {
 		clientPart = strings.TrimSpace(clientPart)
 		projPart = strings.TrimSpace(projPart)
+		var matches []projectMatch
 		for _, org := range tree {
 			for _, client := range org.Clients {
-				if clientPart == "-" {
-					if client.Client == nil {
-						for _, p := range client.Projects {
-							if strings.EqualFold(p.Name, projPart) {
-								return p.ID, p.Name, false, nil
-							}
-						}
+				cName := ""
+				if client.Client != nil {
+					cName = client.Client.Name
+				}
+				clientMatches := clientPart == "-" && client.Client == nil || clientPart != "-" && client.Client != nil && strings.EqualFold(client.Client.Name, clientPart)
+				if !clientMatches {
+					continue
+				}
+				for _, p := range client.Projects {
+					if (!includeArchived && p.ArchivedAt != nil) || !strings.EqualFold(p.Name, projPart) {
+						continue
 					}
-				} else {
-					if client.Client != nil && strings.EqualFold(client.Client.Name, clientPart) {
-						for _, p := range client.Projects {
-							if strings.EqualFold(p.Name, projPart) {
-								return p.ID, p.Name, false, nil
-							}
-						}
-					}
+					matches = append(matches, projectMatch{p: p, client: cName})
 				}
 			}
+		}
+		if len(matches) == 1 {
+			return matches[0].p.ID, matches[0].p.Name, false, nil
+		}
+		if len(matches) > 1 {
+			return ambiguousProjectMatches(trimmed, matches)
 		}
 		return 0, "", false, errors.New("el proyecto no existe")
 	}
 
 	// 3. Nombre simple -> coincidencia única o error con candidatos
-	type match struct {
-		p      catalog.Project
-		client string
-	}
-	var matches []match
+	var matches []projectMatch
 	for _, org := range tree {
 		for _, client := range org.Clients {
 			cName := ""
@@ -122,9 +167,10 @@ func resolveProjectInput(ref string, tree []catalog.TreeOrganization) (projectID
 				cName = client.Client.Name
 			}
 			for _, p := range client.Projects {
-				if strings.EqualFold(p.Name, trimmed) {
-					matches = append(matches, match{p: p, client: cName})
+				if (!includeArchived && p.ArchivedAt != nil) || !strings.EqualFold(p.Name, trimmed) {
+					continue
 				}
+				matches = append(matches, projectMatch{p: p, client: cName})
 			}
 		}
 	}
@@ -134,23 +180,27 @@ func resolveProjectInput(ref string, tree []catalog.TreeOrganization) (projectID
 	}
 
 	if len(matches) > 1 {
-		sort.Slice(matches, func(i, j int) bool {
-			return matches[i].p.ID < matches[j].p.ID
-		})
-		cands := make([]string, 0, len(matches))
-		for _, m := range matches {
-			prefix := m.client
-			if prefix == "" {
-				prefix = "-"
-			}
-			cands = append(cands, fmt.Sprintf("#%d %s/%s", m.p.ID, prefix, m.p.Name))
-		}
-		msg := fmt.Sprintf("«%s» existe en varios clientes: %s. Usa -p \"cliente/proyecto\" o -p #id.", trimmed, strings.Join(cands, ", "))
-		return 0, "", false, &ambiguousProjectError{message: msg}
+		return ambiguousProjectMatches(trimmed, matches)
 	}
 
 	// No existe en ningún cliente: nuevo nombre simple
 	return 0, trimmed, true, nil
+}
+
+func ambiguousProjectMatches(ref string, matches []projectMatch) (int64, string, bool, error) {
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].p.ID < matches[j].p.ID
+	})
+	cands := make([]string, 0, len(matches))
+	for _, m := range matches {
+		prefix := m.client
+		if prefix == "" {
+			prefix = "-"
+		}
+		cands = append(cands, fmt.Sprintf("#%d %s/%s", m.p.ID, prefix, m.p.Name))
+	}
+	msg := fmt.Sprintf("«%s» existe en varios clientes: %s. Usa -p \"cliente/proyecto\" o -p #id.", ref, strings.Join(cands, ", "))
+	return 0, "", false, &ambiguousProjectError{message: msg}
 }
 
 // pick resuelve una referencia: el nombre (sin distinguir mayúsculas) gana sobre el id numérico.

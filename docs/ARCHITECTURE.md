@@ -185,9 +185,11 @@ remembered in `resume_entry_uids`. When the deadline passes:
 3. Nexus never restarts work timers by itself; the user may not be back yet.
 
 **Movement reminders.** A rule such as "after 50 minutes of continuous work, suggest moving for
-5 minutes". It only counts time while a work timer runs and the user is not idle. Actions:
-**Done**, **In 10 min**, **Skip**. Completed reminders are recorded for a weekly summary. The
-source of the idle signal (Omarchy's idle service or the Wayland idle protocol) is an open question.
+5 minutes". It counts continuous computer use, whether or not a work timer runs: time while the
+user is idle or the screen is locked does not count, and an inactivity of 2 minutes or more restarts
+the count. Actions: **Done**, **In 10 min**, **Skip**; only an explicit **Done** counts as a
+completed pause (closing or ignoring the reminder does not). The idle signal comes from Omarchy
+(`omarchy-shell idle status` and `lock isLocked`); without Omarchy it degrades to "never idle".
 
 ## 10. Integrations
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -119,6 +120,20 @@ func TestStartJSONErrorAndStatusWithoutDatabase(t *testing.T) {
 	}
 }
 
+func TestParseArgsTreatsDoubleDashAsEndOfOptions(t *testing.T) {
+	got, err := parseArgs([]string{"--", "-proyecto", "--json"}, editValueFlags, jsonFlags)
+	if err != nil || !reflect.DeepEqual(got.positional, []string{"-proyecto", "--json"}) || len(got.flags) != 0 {
+		t.Fatalf("parseArgs después de -- = %+v, %v", got, err)
+	}
+}
+
+func TestInvalidKindIsLocalized(t *testing.T) {
+	got := localize(tracking.ErrInvalidKind)
+	if got.Error() != "solo se pueden reanudar tareas, no breaks" {
+		t.Fatalf("error localizado = %q", got)
+	}
+}
+
 func TestErrorsAreLocalizedToSpanish(t *testing.T) {
 	out, err := invoke(t, testTracker(t), "start", "  ", "--json")
 	if err == nil || err.Error() != "el título no puede estar vacío" || !strings.Contains(out, "el título no puede estar vacío") {
@@ -126,5 +141,13 @@ func TestErrorsAreLocalizedToSpanish(t *testing.T) {
 	}
 	if _, err = invoke(t, testTracker(t), "stop", "999"); err == nil || err.Error() != "el temporizador no está en curso" {
 		t.Fatalf("stop unknown: err=%v", err)
+	}
+}
+
+// Tras "--" todo es título, aunque empiece con guion.
+func TestStartAcceptsEndOfOptions(t *testing.T) {
+	out, err := invoke(t, testTracker(t), "start", "-p", "Web", "--", "-guion")
+	if err != nil || !strings.HasPrefix(out, "iniciado #1 -guion") {
+		t.Fatalf("start = %q, %v", out, err)
 	}
 }

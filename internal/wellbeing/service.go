@@ -142,12 +142,15 @@ func (s *Service) Due(now time.Time) (Reminder, bool) {
 	i := parseInt(v["rotation"])
 	return Reminder{ID: int64(i + 1), Duration: cfg.Duration, Message: messages[i%len(messages)], Tip: tips[i%len(tips)]}, true
 }
-func optionalTime(x time.Time) *time.Time {
-	if x.IsZero() {
+
+// futureTime devuelve x solo si todavía no venció.
+func futureTime(x, now time.Time) *time.Time {
+	if !x.After(now) {
 		return nil
 	}
 	return &x
 }
+
 func parseTime(x string) time.Time {
 	n, _ := strconv.ParseInt(x, 10, 64)
 	if n == 0 {
@@ -266,5 +269,5 @@ func (s *Service) Status(now time.Time) (Status, error) {
 		day := now.Format("2006-01-02")
 		counters = Counters{Shown: parseInt(v["shown:"+day]), Done: parseInt(v["done:"+day]), Skipped: parseInt(v["skipped:"+day]), Snoozed: parseInt(v["snoozed:"+day])}
 	}
-	return Status{Settings: cfg, NextDue: next, Active: active, ActiveFor: activeFor, SnoozedUntil: optionalTime(parseTime(v["snoozed_until"])), DNDUntil: optionalTime(parseTime(v["dnd_until"])), Counters: counters}, nil
+	return Status{Settings: cfg, NextDue: next, Active: active, ActiveFor: activeFor, SnoozedUntil: futureTime(parseTime(v["snoozed_until"]), now), DNDUntil: futureTime(parseTime(v["dnd_until"]), now), Counters: counters}, nil
 }

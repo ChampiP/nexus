@@ -210,3 +210,24 @@ func TestDeleteRemovesKeyAndPartialSavePreservesOthers(t *testing.T) {
 		t.Fatalf("unexpected values: %v", v)
 	}
 }
+
+// Un pospuesto o un no molestar ya vencidos no deben aparecer en el estado.
+func TestStatusHidesExpiredSnoozeAndDND(t *testing.T) {
+	repo := newTestSQLite(t)
+	s := NewService(repo, &workState{active: true}, nil)
+	now := time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC)
+	if err := s.Snooze(now, 10*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DND(now, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	st, err := s.Status(now.Add(5 * time.Minute))
+	if err != nil || st.SnoozedUntil == nil || st.DNDUntil == nil {
+		t.Fatalf("vigentes: %+v %v", st, err)
+	}
+	st, err = s.Status(now.Add(2 * time.Hour))
+	if err != nil || st.SnoozedUntil != nil || st.DNDUntil != nil {
+		t.Fatalf("vencidos: snoozed=%v dnd=%v err=%v", st.SnoozedUntil, st.DNDUntil, err)
+	}
+}

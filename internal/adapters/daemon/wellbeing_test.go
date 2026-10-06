@@ -136,6 +136,43 @@ func awaitSignal(t *testing.T, ch <-chan struct{}, message string) {
 	}
 }
 
+type cancelBlockingPresenter struct {
+	started  chan struct{}
+	canceled chan struct{}
+	release  chan struct{}
+}
+
+func (p *cancelBlockingPresenter) Show(ctx context.Context, _ wellbeing.Reminder) (string, error) {
+	close(p.started)
+	<-ctx.Done()
+	close(p.canceled)
+	<-p.release
+	return "", ctx.Err()
+}
+
+func TestRunWaitsForWellbeingPresenterOnCancel(t *testing.T) {
+	service := &wbFake{due: true}
+	presenter := &cancelBlockingPresenter{
+		started: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		RunWithWellbeing(ctx, noBreaks{}, noNotify{}, nil, service, presenter, &busyFake{}, time.Now, time.Hour)
+	}()
+	awaitSignal(t, presenter.started, "presenter did not start")
+	cancel()
+	awaitSignal(t, presenter.canceled, "presenter context was not canceled")
+	select {
+	case <-done:
+		t.Fatal("RunWithWellbeing returned while the presenter was still running")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(presenter.release)
+	awaitSignal(t, done, "RunWithWellbeing did not return after presenter finished")
+}
+
 func TestWellbeingWaitsUntilTwoMinutesAfterBusyAndMapsReply(t *testing.T) {
 	now := time.Now()
 	var mu sync.Mutex

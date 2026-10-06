@@ -67,7 +67,8 @@ func (m Model) breakLayout() breakLayout {
 			}
 			next += len(f.timers)
 		}
-		l.start = rect{x, next, lipgloss.Width(buttonText(breakStartLabels[0])), 1}
+		startText := buttonPillText(breakStartLabels[0])
+		l.start = rect{x, next, lipgloss.Width(startText), 1}
 		content = next + 1 - y
 	}
 	l.todayY = l.cardY + content + 2 + 1

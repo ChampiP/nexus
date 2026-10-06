@@ -147,12 +147,8 @@ func applyOne(db *sql.DB, m Migration, now time.Time) (bool, error) {
 	if err := m.Up(tx); err != nil {
 		return false, err
 	}
-	if err := tx.Commit(); err != nil {
-		return false, err
-	}
-
-	// Comprueba la integridad referencial antes de dar por buena la migración.
-	rows, err := conn.QueryContext(ctx, `PRAGMA foreign_key_check`)
+	// Comprueba la integridad referencial antes de confirmar la migración.
+	rows, err := tx.QueryContext(ctx, `PRAGMA foreign_key_check`)
 	if err != nil {
 		return false, fmt.Errorf("foreign_key_check: %w", err)
 	}
@@ -175,6 +171,9 @@ func applyOne(db *sql.DB, m Migration, now time.Time) (bool, error) {
 	}
 	if len(violations) > 0 {
 		return false, fmt.Errorf("foreign key check failed: %s", strings.Join(violations, "; "))
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
 	}
 
 	if _, err := conn.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {

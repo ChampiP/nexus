@@ -13,8 +13,8 @@ type ProjectEntries interface {
 	RenameProject(id int64, name string) error
 }
 
-// Service implements the catalog use cases. Cross-module steps run first, then the catalog row,
-// so a failure leaves consistent data and the operation can be retried.
+// El servicio implementa los casos de uso del catálogo. Se validan primero sus cambios y,
+// si fallan después de actualizar los registros de tiempo, se intenta restaurar el estado anterior.
 type Service struct {
 	repo    *SQLite
 	entries ProjectEntries
@@ -52,7 +52,7 @@ func (s *Service) RenameOrganization(id int64, name string) error {
 	if err != nil {
 		return err
 	}
-	return s.repo.exec(`UPDATE organizations SET name = ? WHERE id = ?`, name, id)
+	return s.repo.renameOrganization(id, name)
 }
 
 // DeleteOrganization removes an organization; its clients remain without organization.
@@ -66,16 +66,16 @@ func (s *Service) DeleteOrganization(id int64) error {
 		return err
 	}
 	renamed := make(map[int64]string)
-	reserved := make(map[string]bool)
+	var reserved []string
 	for _, client := range clients {
 		name := client.Name
 		if s.repo.clientTaken(0, name, 0) {
 			name = uniqueName(client.Name+" ("+org.Name+")", func(candidate string) bool {
-				return s.repo.clientTaken(0, candidate, 0) || s.repo.clientTaken(id, candidate, client.ID) || reserved[strings.ToLower(candidate)]
+				return s.repo.clientTaken(0, candidate, 0) || s.repo.clientTaken(id, candidate, client.ID) || containsEqualFold(reserved, candidate)
 			})
 			renamed[client.ID] = name
 		}
-		reserved[strings.ToLower(name)] = true
+		reserved = append(reserved, name)
 	}
 	return s.repo.deleteOrganization(id, renamed)
 }
@@ -95,26 +95,18 @@ func (s *Service) RenameClient(id int64, name string) error {
 	if err != nil {
 		return err
 	}
-	client, err := s.repo.Client(id)
-	if err != nil {
+	if _, err := s.repo.Client(id); err != nil {
 		return err
 	}
-	if s.repo.clientTaken(derefID(client.OrganizationID), name, id) {
-		return ErrDuplicateName
-	}
-	return s.repo.exec(`UPDATE clients SET name = ? WHERE id = ?`, name, id)
+	return s.repo.renameClient(id, name)
 }
 
 // MoveClient moves a client to an organization; organizationID 0 means no organization.
 func (s *Service) MoveClient(clientID, organizationID int64) error {
-	client, err := s.repo.Client(clientID)
-	if err != nil {
+	if _, err := s.repo.Client(clientID); err != nil {
 		return err
 	}
-	if s.repo.clientTaken(organizationID, client.Name, clientID) {
-		return ErrDuplicateName
-	}
-	return s.repo.exec(`UPDATE clients SET organization_id = NULLIF(?, 0) WHERE id = ?`, organizationID, clientID)
+	return s.repo.moveClient(clientID, organizationID)
 }
 
 // DeleteClient removes a client; its projects remain without client.
@@ -128,25 +120,34 @@ func (s *Service) DeleteClient(id int64) error {
 		return err
 	}
 	renamed := make(map[int64]string)
-	reserved := make(map[string]bool)
+	originalNames := make(map[int64]string)
+	var reserved []string
 	for _, project := range projects {
 		name := project.Name
 		if s.repo.ProjectNameTaken(name, 0, 0) {
 			name = uniqueName(project.Name+" ("+client.Name+")", func(candidate string) bool {
-				return s.repo.ProjectNameTaken(candidate, 0, 0) || s.repo.ProjectNameTaken(candidate, id, project.ID) || reserved[strings.ToLower(candidate)]
+				return s.repo.ProjectNameTaken(candidate, 0, 0) || s.repo.ProjectNameTaken(candidate, id, project.ID) || containsEqualFold(reserved, candidate)
 			})
 			renamed[project.ID] = name
+			originalNames[project.ID] = project.Name
 		}
-		reserved[strings.ToLower(name)] = true
+		reserved = append(reserved, name)
 	}
-	// El puerto de tracking usa otra conexión, por lo que actualizamos primero el texto legado;
-	// los cambios del catálogo (renombres y borrado) sí se confirman juntos en una transacción.
 	for projectID, name := range renamed {
 		if err := s.entries.RenameProject(projectID, name); err != nil {
+			for changedID, oldName := range originalNames {
+				_ = s.entries.RenameProject(changedID, oldName)
+			}
 			return fmt.Errorf("rename project on entries: %w", err)
 		}
 	}
-	return s.repo.deleteClient(id, renamed)
+	if err := s.repo.deleteClient(id, renamed); err != nil {
+		for projectID, oldName := range originalNames {
+			_ = s.entries.RenameProject(projectID, oldName)
+		}
+		return err
+	}
+	return nil
 }
 
 // CreateProject adds a project; clientID 0 means no client.
@@ -175,7 +176,11 @@ func (s *Service) RenameProject(id int64, name string) error {
 	if err := s.entries.RenameProject(id, name); err != nil {
 		return fmt.Errorf("rename project on entries: %w", err)
 	}
-	return s.repo.exec(`UPDATE projects SET name = ? WHERE id = ?`, name, id)
+	if err := s.repo.renameProject(id, name); err != nil {
+		_ = s.entries.RenameProject(id, proj.Name)
+		return err
+	}
+	return nil
 }
 
 // MoveProject mueve un proyecto a un cliente; clientID 0 significa sin cliente.
@@ -192,7 +197,7 @@ func (s *Service) MoveProject(projectID, clientID int64) error {
 	if s.repo.ProjectNameTaken(proj.Name, clientID, projectID) {
 		return ErrDuplicateName
 	}
-	return s.repo.exec(`UPDATE projects SET client_id = NULLIF(?, 0) WHERE id = ?`, clientID, projectID)
+	return s.repo.moveProject(projectID, clientID)
 }
 
 // ArchiveProject hides a project from pickers without losing its history.
@@ -231,7 +236,12 @@ func (s *Service) MergeProjects(fromID, intoID int64) error {
 	if err := s.entries.Relink(fromID, intoID, into.Name); err != nil {
 		return fmt.Errorf("move entries: %w", err)
 	}
-	return s.repo.exec(`DELETE FROM projects WHERE id = ?`, fromID)
+	// Si el borrado falla, las entradas ya están en el destino y el origen queda vacío: estado coherente
+	// que se puede reintentar. No se deshace el Relink: movería también las entradas que ya eran del destino.
+	if err := s.repo.exec(`DELETE FROM projects WHERE id = ?`, fromID); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Tree returns organizations > clients > projects, including the groups without organization
@@ -240,6 +250,15 @@ func (s *Service) Tree() ([]TreeOrganization, error) { return s.repo.Tree() }
 
 // ProjectsNamed devuelve todos los proyectos con ese nombre (ignorando mayúsculas/minúsculas) en todos los clientes.
 func (s *Service) ProjectsNamed(name string) ([]Project, error) { return s.repo.ProjectsNamed(name) }
+
+func containsEqualFold(names []string, candidate string) bool {
+	for _, name := range names {
+		if strings.EqualFold(name, candidate) {
+			return true
+		}
+	}
+	return false
+}
 
 func uniqueName(base string, taken func(string) bool) string {
 	if !taken(base) {

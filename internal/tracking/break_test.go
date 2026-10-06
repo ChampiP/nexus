@@ -89,6 +89,25 @@ func TestBreakSeconds(t *testing.T) {
 	}
 }
 
+func TestResumeRejectsBreakEntry(t *testing.T) {
+	now := int64(1000)
+	tracker := newBreakTracker(t, &now)
+	brk, err := tracker.Start(StartInput{Title: "Descanso", Kind: KindBreak})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := tracker.Stop(brk.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := tracker.Resume(brk.ID); !errors.Is(err, ErrInvalidKind) {
+		t.Fatalf("Resume de break = %v; quiero ErrInvalidKind", err)
+	}
+	if running, err := tracker.repository.Running(); err != nil || len(running) != 0 {
+		t.Fatalf("sesiones en curso tras Resume de break = %+v, %v", running, err)
+	}
+}
+
 func TestResumeCopiesFields(t *testing.T) {
 	now := int64(1000)
 	s, err := openSQLite(filepath.Join(t.TempDir(), "nexus.db"))
