@@ -28,7 +28,7 @@ Non-goals: new features, refactors beyond the fix, changing the activity-based p
 - [x] 4.2 Restore/RestoreTask revives stopped sessions or violates one-running-per-task (tracking v5 deleted_running; verify caught it missing from cmd/nexus orderedMigrations → fixed + guard test)
 - [x] 4.3 EditTask returns a synthetic entry (EndedAt nil, StartedAt 0)
 
-## Batch 5 — remaining medium/low findings
+## Batch 5 — remaining medium/low findings (commit 18e367f, verified)
 - [x] 5.1 migrate.go: foreign_key_check runs after Commit (move it before Commit)
 - [x] 5.2 catalog↔tracking: rename/merge/delete not atomic (entries text updated first; compensate or share a tx)
 - [x] 5.3 tracking: Resume accepts a break entry; TaskTotal misses kind='work'; Totals full scan; Projects GROUP BY not NOCASE
