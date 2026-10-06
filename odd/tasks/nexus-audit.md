@@ -23,7 +23,7 @@ Non-goals: new features, refactors beyond the fix, changing the activity-based p
 - [x] 3.4 Edit from Recent: focus stuck and edit buttons unreachable by keyboard
 - [x] 3.5 Ctrl+Z restores stale deletions and steals text-input undo
 
-## Batch 4 — catalog, trash, tasks
+## Batch 4 — catalog, trash, tasks (commit 86e37a9, verified on a copy of the real DB)
 - [x] 4.1 Deleting a client/org fails with duplicate name (partial unique + ON DELETE SET NULL)
 - [x] 4.2 Restore/RestoreTask revives stopped sessions or violates one-running-per-task (tracking v5 deleted_running; verify caught it missing from cmd/nexus orderedMigrations → fixed + guard test)
 - [x] 4.3 EditTask returns a synthetic entry (EndedAt nil, StartedAt 0)
