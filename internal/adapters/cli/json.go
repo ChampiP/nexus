@@ -23,6 +23,8 @@ type statusOutput struct {
 	TodaySeconds int64         `json:"today_seconds"`
 	// Break es aditivo: null cuando no hay break activo.
 	Break *breakOutput `json:"break"`
+	// Error solo aparece cuando no se pudo leer el estado.
+	Error string `json:"error,omitempty"`
 }
 type createdEntry struct {
 	ID          int64  `json:"id"`

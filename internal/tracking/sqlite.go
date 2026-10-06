@@ -238,9 +238,9 @@ func (s *SQLite) Stop(id, endedAt int64) error {
 	return nil
 }
 
-// StopAll ends all currently running timers at endedAt.
+// StopAll termina los timers de trabajo en curso en endedAt; el break lo termina solo countdown.
 func (s *SQLite) StopAll(endedAt int64) (int, error) {
-	result, err := s.db.Exec(`UPDATE entries SET ended_at = ? WHERE ended_at IS NULL`, endedAt)
+	result, err := s.db.Exec(`UPDATE entries SET ended_at = ? WHERE ended_at IS NULL AND kind = 'work'`, endedAt)
 	if err != nil {
 		return 0, fmt.Errorf("stop all timers: %w", err)
 	}

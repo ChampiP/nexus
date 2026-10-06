@@ -48,7 +48,7 @@ func loadIndex(c Catalog) (*index, error) {
 }
 
 // resolveProjectInput resuelve una referencia a proyecto para start/edit -p y subcomandos de project:
-// - "#12" o un número simple -> por id exacto
+// - "#12" -> por id exacto (un número simple es un nombre)
 // - "cliente/proyecto" (o "-/proyecto" sin cliente) -> por cliente y nombre
 // - nombre simple -> coincidencia única, error con candidatos si es ambiguo, o nuevo nombre si no existe
 func resolveProjectInput(ref string, tree []catalog.TreeOrganization) (projectID int64, projectName string, isNewBareName bool, err error) {
@@ -57,7 +57,7 @@ func resolveProjectInput(ref string, tree []catalog.TreeOrganization) (projectID
 		return 0, "", false, errors.New("el proyecto no existe")
 	}
 
-	// 1. "#12" o número simple -> por id
+	// 1. "#12" -> por id; un número simple es un nombre más
 	var id int64
 	var isID bool
 	if strings.HasPrefix(trimmed, "#") {
@@ -66,9 +66,6 @@ func resolveProjectInput(ref string, tree []catalog.TreeOrganization) (projectID
 			id = n
 			isID = true
 		}
-	} else if n, parseErr := strconv.ParseInt(trimmed, 10, 64); parseErr == nil && n > 0 {
-		id = n
-		isID = true
 	}
 
 	if isID {
@@ -204,7 +201,12 @@ func (x *index) project(ref string) (catalog.Project, error) {
 		return catalog.Project{}, err
 	}
 	if isNew {
-		return catalog.Project{}, errors.New(kindProject.missing)
+		// como en pick: si no hay nombre, un número simple se acepta como id
+		if n, parseErr := strconv.ParseInt(strings.TrimSpace(ref), 10, 64); parseErr == nil {
+			id = n
+		} else {
+			return catalog.Project{}, errors.New(kindProject.missing)
+		}
 	}
 	return byID(x.projects, id, kindProject, func(p catalog.Project) int64 { return p.ID })
 }

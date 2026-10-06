@@ -27,14 +27,14 @@ assert.strictEqual(
 )
 const timers = [
   { title: "Arreglar bug", project: "nexus", started_at: 1000 },
-  { title: "Revisión", project: "", started_at: 2000 }
+  { title: "Revisión", project: "", started_at: 1001 }
 ]
 assert.strictEqual(
-  Model.tooltipText(2160, timers, 61000, false),
+  Model.tooltipText(2160, timers, 1060000, false),
   "Arreglar bug (nexus)  00:01:00\nRevisión  00:00:59"
 )
 assert.strictEqual(
-  Model.tooltipText(2160, timers, 61000, true),
+  Model.tooltipText(2160, timers, 1060000, true),
   "Arreglar bug (nexus)  00:01:00\nRevisión  00:00:59 (sin actualizar)"
 )
 
@@ -102,3 +102,10 @@ assert.deepStrictEqual(Model.projectArgv({ name: "" }), [])
 
 console.log("Model.js ok")
 
+
+// started_at llega de la CLI en segundos Unix; now está en milisegundos.
+assert.strictEqual(Model.formatClock(1770000000, 1770000060000), "00:01:00")
+// Un proyecto sin id del catálogo (id 0) se envía por nombre, nunca como "#0".
+assert.deepStrictEqual(Model.projectArgv({ id: 0, name: "Adhoc" }), ["-p", "Adhoc"])
+assert.deepStrictEqual(Model.projectArgv({ id: 7, name: "Web" }), ["-p", "#7"])
+console.log("ok")

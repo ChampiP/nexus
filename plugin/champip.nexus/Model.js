@@ -5,8 +5,9 @@ function formatDuration(seconds) {
   return hours + "h " + (minutes < 10 ? "0" : "") + minutes + "m"
 }
 
+// startedAt viene de la CLI en segundos Unix; now está en milisegundos (Date.now()).
 function formatClock(startedAt, now) {
-  var elapsed = Math.max(0, Math.floor((Number(now) - Number(startedAt)) / 1000))
+  var elapsed = Math.max(0, Math.floor(Number(now) / 1000 - Number(startedAt)))
   var hours = Math.floor(elapsed / 3600)
   var minutes = Math.floor((elapsed % 3600) / 60)
   var seconds = elapsed % 60
@@ -50,7 +51,7 @@ function barTooltip(todaySeconds, running, nowMs, stale) {
     text = list.map(function(entry) {
       var title = String((entry && entry.title) || "")
       var project = entry && entry.project ? " (" + entry.project + ")" : ""
-      var startedAt = entry && entry.started_at ? entry.started_at : now
+      var startedAt = entry && entry.started_at ? entry.started_at : now / 1000
       return title + project + "  " + formatClock(startedAt, now)
     }).join("\n")
   }
@@ -173,7 +174,8 @@ function projectArgv(project) {
     if (!trimmed) return []
     return ["-p", trimmed]
   }
-  if (project.id !== undefined && project.id !== null && String(project.id).trim() !== "") {
+  // id 0 = proyecto usado sin fila en el catálogo: se envía por nombre.
+  if (project.id !== undefined && project.id !== null && String(project.id).trim() !== "" && String(project.id).trim() !== "0") {
     var idStr = String(project.id).trim()
     return ["-p", idStr.indexOf("#") === 0 ? idStr : "#" + idStr]
   }

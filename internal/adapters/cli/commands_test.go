@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -629,4 +630,39 @@ func TestReportAndListShowClientPrefixForDuplicateNames(t *testing.T) {
 			t.Fatalf("recent T3 project = %v, se esperaba Unico", r["project"])
 		}
 	}
+}
+
+func TestNumericProjectRefIsNameUnlessHashPrefixed(t *testing.T) {
+	a := newApp(t)
+	// "2024" no existe como id: se crea como nombre y se reutiliza por nombre
+	a.mustRun(t, "start", "A", "-p", "2024")
+	a.mustRun(t, "stop")
+	a.mustRun(t, "start", "B", "-p", "2024")
+	a.mustRun(t, "stop")
+	wantOut(t, a.mustRun(t, "projects"), "2024\n")
+
+	// un número simple que coincide con un id existente sigue siendo un nombre
+	a.mustRun(t, "start", "C", "-p", "Alfa")
+	a.mustRun(t, "stop")
+	a.mustRun(t, "start", "D", "-p", "1")
+	a.mustRun(t, "stop")
+	wantOut(t, a.mustRun(t, "projects"), "1\n2024\nAlfa\n")
+
+	// "#id" sigue resolviendo por id
+	var projs []struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal([]byte(a.mustRun(t, "projects", "--json")), &projs); err != nil {
+		t.Fatal(err)
+	}
+	var alfa int64
+	for _, p := range projs {
+		if p.Name == "Alfa" {
+			alfa = p.ID
+		}
+	}
+	a.mustRun(t, "start", "E", "-p", fmt.Sprintf("#%d", alfa))
+	a.mustRun(t, "stop")
+	wantOut(t, a.mustRun(t, "projects"), "1\n2024\nAlfa\n")
 }

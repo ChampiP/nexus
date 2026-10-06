@@ -218,3 +218,27 @@ func TestGetReturnsEntryOrNotFound(t *testing.T) {
 		t.Fatalf("Get inexistente = %v", err)
 	}
 }
+
+func TestStopAllLeavesBreakRunning(t *testing.T) {
+	now := int64(1000)
+	tracker := newBreakTracker(t, &now)
+	work, err := tracker.Start(StartInput{Title: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	brk, err := tracker.Start(StartInput{Title: "Break", Kind: KindBreak})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now = 2000
+	n, err := tracker.StopAll()
+	if err != nil || n != 1 {
+		t.Fatalf("StopAll = %d, %v; want 1, nil", n, err)
+	}
+	if running, _ := tracker.IsRunning(work.ID); running {
+		t.Fatal("la entrada de trabajo debía quedar detenida")
+	}
+	if running, _ := tracker.IsRunning(brk.ID); !running {
+		t.Fatal("StopAll no debe terminar la entrada del break")
+	}
+}

@@ -135,7 +135,7 @@ func runStop(args []string, tracker Tracker, stdout io.Writer) error {
 		}
 	}
 	if len(positional) > 1 || (all && len(positional) != 0) {
-		return fmt.Errorf("uso: nexus stop [id] [--all]")
+		return commandError(fmt.Errorf("uso: nexus stop [id] [--all]"), jsonMode, stdout)
 	}
 	count := 1
 	var err error
@@ -145,7 +145,7 @@ func runStop(args []string, tracker Tracker, stdout io.Writer) error {
 	} else if len(positional) == 0 {
 		running, _, _, snapshotErr := tracker.Snapshot()
 		if snapshotErr != nil {
-			return snapshotErr
+			return commandError(snapshotErr, jsonMode, stdout)
 		}
 		if len(running) > 0 {
 			stoppedID = running[len(running)-1].ID
@@ -158,7 +158,7 @@ func runStop(args []string, tracker Tracker, stdout io.Writer) error {
 		}
 	}
 	if err != nil {
-		return err
+		return commandError(err, jsonMode, stdout)
 	}
 	if jsonMode {
 		return json.NewEncoder(stdout).Encode(stoppedOutput{Stopped: count})
@@ -188,7 +188,13 @@ func runStatus(args []string, tracker Tracker, opts Options, stdout io.Writer) e
 	output.Break = presentBreak(active, now)
 	if tracker != nil {
 		running, today, _, err := tracker.Snapshot()
-		if err == nil {
+		if err != nil {
+			// Con --json se conserva la forma habitual más "error", para que la barra mantenga su último estado.
+			if !jsonMode {
+				return err
+			}
+			output.Error = localize(err).Error()
+		} else {
 			output.TodaySeconds = today
 			output.Count = len(running)
 			for _, entry := range running {
@@ -262,15 +268,15 @@ func projectDisplayNames(tree []catalog.TreeOrganization) (map[int64]string, map
 func runList(args []string, tracker Tracker, cat Catalog, now time.Time, stdout io.Writer) error {
 	jsonMode := contains(args, "--json")
 	if len(args) > 0 && (!jsonMode || len(args) != 1) {
-		return fmt.Errorf("uso: nexus ls [--json]")
+		return commandError(fmt.Errorf("uso: nexus ls [--json]"), jsonMode, stdout)
 	}
 	running, _, recent, err := tracker.Snapshot()
 	if err != nil {
-		return err
+		return commandError(err, jsonMode, stdout)
 	}
 	tasks, err := tracker.RecentTasks(trashLimit)
 	if err != nil {
-		return err
+		return commandError(err, jsonMode, stdout)
 	}
 	var byID map[int64]string
 	var byName map[string]string
@@ -344,13 +350,13 @@ func runProjects(args []string, tracker Tracker, cat Catalog, stdout io.Writer) 
 		return err
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("uso: nexus projects [--json] [-q consulta]")
+		return commandError(fmt.Errorf("uso: nexus projects [--json] [-q consulta]"), *jsonMode, stdout)
 	}
 	var tree []catalog.TreeOrganization
 	if cat != nil {
 		var err error
 		if tree, err = cat.Tree(); err != nil {
-			return err
+			return commandError(err, *jsonMode, stdout)
 		}
 	}
 	projects := projectlist.Build(tree, tracker.Projects(""), *query)
