@@ -16,7 +16,7 @@ Non-goals: new features, refactors beyond the fix, changing the activity-based p
 - [x] 2.2 StartBreak failure leaves work timers stopped; whitespace-only label
 - [x] 2.3 Dismissed/expired/"Abrir Nexus" notification counted as pause done
 
-## Batch 3 — TUI
+## Batch 3 — TUI (commit 6c8ae6c, verified)
 - [x] 3.1 breakView index panic with long text
 - [x] 3.2 Wide: wideRunning ignores runScroll → Stop hits the wrong task
 - [x] 3.3 Wide + screenBreak: clicks in columns 0-1 ignored
