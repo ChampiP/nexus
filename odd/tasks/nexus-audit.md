@@ -11,7 +11,7 @@ Non-goals: new features, refactors beyond the fix, changing the activity-based p
 - [x] 1.3 `status --json` swallows Snapshot errors (bar shows 0); stop/ls/projects return plain errors in --json mode
 - [x] 1.4 Numeric project names resolved as ids; only `#id` means id (cli/catalog.go)
 
-## Batch 2 — pauses and break
+## Batch 2 — pauses and break (commit 2c70f3c, verified)
 - [x] 2.1 inactive_since never deleted from SQLite → pauses never fire again (wellbeing)
 - [x] 2.2 StartBreak failure leaves work timers stopped; whitespace-only label
 - [x] 2.3 Dismissed/expired/"Abrir Nexus" notification counted as pause done
