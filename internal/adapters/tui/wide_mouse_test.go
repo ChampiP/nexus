@@ -255,3 +255,121 @@ func TestWideMouseCanExtendActiveBreak(t *testing.T) {
 }
 
 func timePtr(value int64) *int64 { return &value }
+
+func TestWideMouseStopsTaskDrawnOnScrolledRow(t *testing.T) {
+	var running []tracking.Entry
+	for i := 1; i <= 6; i++ {
+		running = append(running, tracking.Entry{ID: int64(i), Title: fmt.Sprintf("Timer-%d", i)})
+	}
+	store := &testStore{running: running}
+	m := NewModel(store)
+	m.width, m.height = 130, 30
+	m.runScroll = 2
+	_, layout, _ := m.wideMouseLayout()
+	if len(layout.running) == 0 {
+		t.Fatal("sin filas clicables")
+	}
+	zone := layout.running[0].buttons[1]
+	line := ansi.Strip(strings.Split(m.View(), "\n")[zone.y])
+	if !strings.Contains(line, "Timer-3") {
+		t.Fatalf("la primera fila visible debe dibujar Timer-3: %q", line)
+	}
+	m = updateMouse(t, m, tea.MouseMsg{X: zone.x, Y: zone.y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if len(store.stopped) != 1 || store.stopped[0] != 3 {
+		t.Fatalf("detenidos = %v, quería [3]", store.stopped)
+	}
+}
+
+func TestWideRunScrollResetsWhenEverythingFits(t *testing.T) {
+	store := &testStore{running: []tracking.Entry{{ID: 1, Title: "A"}, {ID: 2, Title: "B"}}}
+	m := NewModel(store)
+	m.width, m.height = 130, 30
+	m.runScroll = 1
+	m.refresh()
+	if m.runScroll != 0 {
+		t.Fatalf("runScroll = %d, quería 0", m.runScroll)
+	}
+}
+
+func wideClick(t *testing.T, m Model, x, y int) Model {
+	t.Helper()
+	return updateMouse(t, m, tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+}
+
+func newWideRowsModel(db *testStore) Model {
+	m := NewModel(db)
+	m.width, m.height = 130, 40
+	return m
+}
+
+func TestWideBreakScreenRoutesClicksByColumn(t *testing.T) {
+	db := newRowsStore()
+	m := NewModel(db, WithBreaks(&fakeBreaks{}))
+	m.width, m.height = 130, 40
+	m.openBreakPage()
+	if m.screen != screenBreak {
+		t.Fatal("no se abrió la pantalla de break")
+	}
+	_, layout, _ := m.wideMouseLayout()
+	m = wideClick(t, m, layout.fields[2].x, layout.fields[2].y)
+	if m.focus != focusDescription {
+		t.Fatalf("clic en la descripción de la columna 0 con break abierto: foco=%v", m.focus)
+	}
+	m.inputs[0].SetValue("Desde break")
+	_, layout, _ = m.wideMouseLayout()
+	m = wideClick(t, m, layout.start.x, layout.start.y)
+	if len(db.started) != 1 || db.started[0].Title != "Desde break" {
+		t.Fatalf("clic en [Iniciar] con break abierto inició %+v", db.started)
+	}
+	geometry, _, _ := m.wideMouseLayout()
+	l := m.breakLayout()
+	want := (m.bp.form.choice + 1) % len(l.durations)
+	zone := l.durations[want]
+	m = wideClick(t, m, geometry.rightX+zone.x, zone.y)
+	if m.bp.form.choice != want {
+		t.Fatalf("clic en la columna derecha: duración=%d, quería %d", m.bp.form.choice, want)
+	}
+}
+
+func TestWideStatusButtonsAndConfirmBlocking(t *testing.T) {
+	db := newRowsStore()
+	m := newWideRowsModel(db)
+	_, layout, _ := m.wideMouseLayout()
+	m = wideClick(t, m, layout.recent[1].buttons[2].x, layout.recent[1].buttons[2].y)
+	if m.confirm == nil {
+		t.Fatal("clic en ✕ Eliminar debe abrir la confirmación")
+	}
+	// Con la confirmación abierta, las columnas de atrás no responden.
+	_, layout, _ = m.wideMouseLayout()
+	stop := layout.running[0].buttons[1]
+	m = wideClick(t, m, stop.x, stop.y)
+	if len(db.stopped) != 0 || m.confirm == nil {
+		t.Fatalf("clic detrás de la confirmación actuó: detenidas=%v", db.stopped)
+	}
+	lines := strings.Split(ansi.Strip(m.View()), "\n")
+	_, layout, _ = m.wideMouseLayout()
+	if len(layout.statusButtons) != 2 {
+		t.Fatalf("botones de estado = %d", len(layout.statusButtons))
+	}
+	assertWideZoneMatchesLabel(t, lines, layout.statusButtons[0], "[Eliminar]")
+	m = wideClick(t, m, layout.statusButtons[1].x, layout.statusButtons[1].y)
+	if m.confirm != nil || len(db.deleted) != 0 {
+		t.Fatal("[Cancelar] debe cerrar sin borrar")
+	}
+	_, layout, _ = m.wideMouseLayout()
+	m = wideClick(t, m, layout.recent[1].buttons[2].x, layout.recent[1].buttons[2].y)
+	_, layout, _ = m.wideMouseLayout()
+	m = wideClick(t, m, layout.statusButtons[0].x, layout.statusButtons[0].y)
+	if len(db.deleted) != 1 || db.deleted[0] != "t3" {
+		t.Fatalf("[Eliminar] eliminó %v", db.deleted)
+	}
+	_, layout, _ = m.wideMouseLayout()
+	if len(layout.statusButtons) != 1 {
+		t.Fatal("falta [Deshacer] en el layout ancho")
+	}
+	assertWideZoneMatchesLabel(t, strings.Split(ansi.Strip(m.View()), "\n"), layout.statusButtons[0], "[Deshacer]")
+	m = wideClick(t, m, layout.statusButtons[0].x, layout.statusButtons[0].y)
+	if len(db.restored) != 1 || db.restored[0] != "t3" {
+		t.Fatalf("[Deshacer] restauró %v", db.restored)
+	}
+}

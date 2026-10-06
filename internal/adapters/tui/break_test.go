@@ -722,3 +722,22 @@ func TestBecomingOverdueOnBreakPageFocusesReturn(t *testing.T) {
 		t.Fatalf("screen=%v onTabs=%v action=%d", got.screen, got.bp.onTabs, got.bp.action)
 	}
 }
+
+func TestActiveBreakCardNeverOverflows(t *testing.T) {
+	start := time.Date(2026, 3, 4, 15, 0, 0, 0, time.Local)
+	brk := &countdown.Break{Label: strings.Repeat("larga ", 34), StartedAt: start.Unix(), EndsAt: start.Add(40 * time.Minute).Unix()}
+	long := strings.Repeat("t", 80)
+	for _, width := range []int{80, 130} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			m := breakModel(&testStore{}, &fakeBreaks{active: brk})
+			m.width, m.screen = width, screenBreak
+			m.bp.resume = []string{long, long, long, long}
+			m.now = start.Add(time.Minute)
+			for _, line := range strings.Split(m.View(), "\n") {
+				if w := ansi.StringWidth(line); w > width {
+					t.Errorf("línea de %d columnas > %d: %q", w, width, ansi.Strip(line))
+				}
+			}
+		})
+	}
+}

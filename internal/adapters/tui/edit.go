@@ -34,6 +34,7 @@ func (m *Model) openEdit(task tracking.TaskSummary) {
 	m.inputs[1].SetValue(entry.Project)
 	m.inputs[2].SetValue(entry.Description)
 	m.focus = focusTitle
+	m.wideColumn = 0
 	m.syncInputFocus()
 }
 

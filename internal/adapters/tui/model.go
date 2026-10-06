@@ -173,7 +173,8 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 			_, cmd := m.updateCatalogMouse(msg)
 			return m, cmd
 		}
-		if m.screen == screenBreak {
+		// En modo ancho el break es la columna derecha: updateMouse reparte por columna.
+		if _, wide := m.wideGeometry(); m.screen == screenBreak && !wide {
 			_, cmd := m.updateBreakMouse(msg)
 			return m, cmd
 		}
@@ -198,8 +199,7 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.width >= 120 && m.screen == screenTimers {
 			return m, m.updateWideKey(msg)
 		}
-		if msg.Type == tea.KeyCtrlZ && m.confirm == nil {
-			m.restoreLast()
+		if m.handleUndoKey(msg) {
 			return m, nil
 		}
 		if msg.Type == tea.KeyEsc {
@@ -219,6 +219,14 @@ func (m Model) update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	return m, nil
+}
+
+func (m *Model) handleUndoKey(key tea.KeyMsg) bool {
+	if key.Type != tea.KeyCtrlZ || m.confirm != nil || m.inputIndex() >= 0 {
+		return false
+	}
+	m.restoreLast()
+	return true
 }
 
 func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
@@ -278,7 +286,10 @@ func (m *Model) updateKey(key tea.KeyMsg) tea.Cmd {
 		case focusProject:
 			m.openProjectPicker()
 			return nil
-		case focusTitle, focusDescription, focusStart:
+		case focusStart:
+			m.startTimer()
+			return nil
+		case focusTitle, focusDescription:
 			if m.edit != nil {
 				m.saveEdit()
 				return nil

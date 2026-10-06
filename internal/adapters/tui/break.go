@@ -540,6 +540,7 @@ func (m *Model) startBreak() {
 }
 
 // updateBreakMouse resuelve clics con las zonas de breakLayout, la única fuente de coordenadas.
+// En modo ancho recibe X relativa a la columna derecha (la resta updateWideMouse).
 func (m *Model) updateBreakMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
 		return *m, nil
@@ -548,9 +549,6 @@ func (m *Model) updateBreakMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	x, y := msg.X, msg.Y
 	if m.clickTab(l.tabs, x, y) {
 		return *m, nil
-	}
-	if geometry, wide := m.wideGeometry(); wide && m.screen == screenBreak {
-		x -= geometry.rightX
 	}
 	defer m.syncBreakFocus()
 	f := &m.bp.form

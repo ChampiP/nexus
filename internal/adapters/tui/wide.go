@@ -40,7 +40,7 @@ func (m Model) wideNavigationGrid() wideNavigation {
 	for _, row := range timers {
 		cell := row.cells[0]
 		switch focusTarget(cell.kind) {
-		case focusTitle, focusProject, focusDescription, focusStart:
+		case focusTitle, focusProject, focusDescription, focusStart, focusEditSave, focusEditDelete, focusEditCancel:
 			grid.columns[0] = append(grid.columns[0], row)
 		case focusRunningStart:
 			grid.columns[0] = append(grid.columns[0], row)
@@ -205,8 +205,7 @@ func (m Model) wideGeometry() (wideGeometry, bool) {
 }
 
 func (m *Model) updateWideKey(key tea.KeyMsg) tea.Cmd {
-	if key.Type == tea.KeyCtrlZ && m.confirm == nil {
-		m.restoreLast()
+	if m.handleUndoKey(key) {
 		return nil
 	}
 	if key.Type == tea.KeyEsc {
@@ -392,16 +391,21 @@ func (g wideNavigation) columnFor(cell navCell, fallback int) int {
 	return fallback
 }
 
-func (m Model) wideView(leftWidth, centerWidth, rightWidth int) string {
-	geometry, _ := m.wideGeometry()
-	leftWidth, centerWidth, rightWidth = geometry.leftWidth, geometry.centerWidth, geometry.rightWidth
+// wideContent arma las tres columnas; wideView y la geometría del ratón comparten su altura.
+func (m Model) wideContent(geometry wideGeometry) string {
+	leftWidth, centerWidth, rightWidth := geometry.leftWidth, geometry.centerWidth, geometry.rightWidth
 	left := lipgloss.JoinVertical(lipgloss.Left,
 		widePanel(leftWidth, titleStyle.Render("NUEVA TAREA"), m.wideTaskForm(leftWidth)),
 		widePanel(leftWidth, titleStyle.Render("EN CURSO"), m.wideRunning(leftWidth)),
 	)
 	center := m.wideDashboard(centerWidth)
 	right := m.wideBreakPanels(rightWidth)
-	content := lipgloss.JoinHorizontal(lipgloss.Top, left, " ", center, " ", right)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", center, " ", right)
+}
+
+func (m Model) wideView(leftWidth, centerWidth, rightWidth int) string {
+	geometry, _ := m.wideGeometry()
+	content := m.wideContent(geometry)
 	header := m.headerBase(false) + "  " + renderTabs([]screen{screenCatalog}, screenCatalog, m.focus == focusTabs || m.isCatalogOverlayOpen())
 	footer := m.hint()
 	if m.isCatalogOverlayOpen() {
@@ -462,7 +466,11 @@ func (m Model) wideRunning(width int) string {
 	}
 	columnActive := m.width < 120 || m.wideColumn == 0
 	var lines []string
-	for i, entry := range m.running {
+	// Solo se dibuja la ventana visible, la misma que usa wideGeometry para los clics.
+	g, _ := m.wideGeometry()
+	end := min(len(m.running), m.runScroll+len(g.runningRows))
+	for i := m.runScroll; i < end; i++ {
+		entry := m.running[i]
 		project := entry.Project
 		if project == "" {
 			project = "Sin proyecto"
@@ -560,7 +568,7 @@ func (m Model) wideBreakPanels(width int) string {
 	if m.brk == nil {
 		breakBody = append(breakBody, m.startForm(width, layout)...)
 	} else {
-		breakBody = append(breakBody, m.activeCard()...)
+		breakBody = append(breakBody, m.activeCard(width-4)...)
 	}
 	breakBody = append(breakBody, titleStyle.Render("BREAKS DE HOY"))
 	breakBody = append(breakBody, m.todayLinesWidth(width, layout)...)

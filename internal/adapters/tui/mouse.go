@@ -9,6 +9,10 @@ func (m *Model) updateWideMouse(msg tea.MouseMsg, g wideGeometry, layout screenL
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
 		return m.updateMouseNarrowFallback(msg)
 	}
+	// Igual que en modo angosto: primero la barra de estado y, con confirmación abierta, nada más responde.
+	if m.clickStatus(layout, msg.X, msg.Y) || m.confirm != nil {
+		return m, nil
+	}
 	if tab := m.wideCatalogTabZone(); tab.contains(msg.X, msg.Y) {
 		m.openCatalogOverlay()
 		return m, nil
@@ -174,6 +178,12 @@ func (m Model) wideMouseLayout() (wideGeometry, screenLayout, bool) {
 	}
 	layout.running, layout.recent = geometry.runningRows, geometry.recent
 	layout.today, layout.week = geometry.today, geometry.week
+	// La barra de estado va bajo el contenido de tres columnas: cabecera + contenido + línea en blanco.
+	layout.statusY = 1 + lipgloss.Height(m.wideContent(geometry)) + 1
+	layout.statusButtons = nil
+	if text, labels := m.statusBar(); len(labels) > 0 {
+		layout.statusButtons = buttonRects(layout.statusY, lipgloss.Width(text), labels)
+	}
 	return geometry, layout, true
 }
 

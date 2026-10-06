@@ -5,6 +5,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"nexus/internal/tracking"
 )
 
 func TestWideNavigationKeepsColumnAndRememberedCells(t *testing.T) {
@@ -130,6 +131,82 @@ func TestWideTitleInputKeepsCursorUntilItsEdge(t *testing.T) {
 	m = updated.(Model)
 	if m.focus == focusTitle {
 		t.Fatal("→ en el borde del título debe poder salir del campo")
+	}
+}
+
+func TestWideEditFromRecentRestoresTitleInputFocus(t *testing.T) {
+	m := timersWithTabs()
+	m.width, m.height = 130, 40
+	m.focus, m.focusedRecent, m.rowButton, m.wideColumn = focusRecent, 0, 1, 1
+	m.syncInputFocus()
+	updated, _ := m.update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	if m.edit == nil || m.focus != focusTitle || !m.inputs[0].Focused() {
+		t.Fatalf("Editar desde recientes: edit=%v foco=%v input enfocado=%v", m.edit != nil, m.focus, m.inputs[0].Focused())
+	}
+	initialTitle := m.inputs[0].Value()
+	updated, _ = m.update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("!")})
+	m = updated.(Model)
+	if m.inputs[0].Value() != initialTitle+"!" {
+		t.Fatalf("texto tras escribir = %q, antes era %q", m.inputs[0].Value(), initialTitle)
+	}
+}
+
+func TestEditButtonsReachableInWideAndNarrowModes(t *testing.T) {
+	for _, width := range []int{100, 130} {
+		t.Run(map[bool]string{true: "wide", false: "narrow"}[width >= 120], func(t *testing.T) {
+			store := &testStore{recent: []tracking.Entry{{ID: 51, TaskUID: "task-51", Title: "Recent task", EndedAt: timePtr(1)}}}
+			m := NewModel(store)
+			m.width, m.height = width, 40
+			m.openEdit(m.recent[0])
+			m.inputs[0].SetValue("Updated task")
+			m.focus, m.wideColumn = focusTitle, 0
+			m.syncInputFocus()
+			pressModel := func(key tea.KeyType) {
+				t.Helper()
+				updated, _ := m.update(tea.KeyMsg{Type: key})
+				m = updated.(Model)
+			}
+			pressModel(tea.KeyDown)
+			pressModel(tea.KeyDown)
+			pressModel(tea.KeyDown)
+			if m.focus != focusEditSave {
+				t.Fatalf("↓ desde título debe llegar a Guardar: foco=%v", m.focus)
+			}
+			pressModel(tea.KeyTab)
+			if m.focus != focusEditDelete {
+				t.Fatalf("Tab desde Guardar debe llegar a Eliminar: foco=%v", m.focus)
+			}
+			pressModel(tea.KeyTab)
+			if m.focus != focusEditCancel {
+				t.Fatalf("Tab desde Eliminar debe llegar a Cancelar: foco=%v", m.focus)
+			}
+			pressModel(tea.KeyShiftTab)
+			pressModel(tea.KeyShiftTab)
+			if m.focus != focusEditSave {
+				t.Fatalf("Shift+Tab desde Cancelar debe volver a Guardar: foco=%v", m.focus)
+			}
+			pressModel(tea.KeyEnter)
+			if m.edit != nil || len(store.edits) != 1 || store.edits[0].input.Title == nil || *store.edits[0].input.Title != "Updated task" {
+				t.Fatalf("Enter en Guardar debe guardar el título editado: edit=%v ediciones=%#v", m.edit != nil, store.edits)
+			}
+		})
+	}
+}
+
+func TestEnterOnEmptyStartShowsTitlePromptInWideAndNarrowModes(t *testing.T) {
+	for _, width := range []int{100, 130} {
+		t.Run(map[bool]string{true: "wide", false: "narrow"}[width >= 120], func(t *testing.T) {
+			m := timersWithTabs()
+			m.width, m.focus, m.wideColumn = width, focusStart, 0
+			m.inputs[0].SetValue("")
+			m.syncInputFocus()
+			updated, _ := m.update(tea.KeyMsg{Type: tea.KeyEnter})
+			m = updated.(Model)
+			if m.message != "Escribe un título" || m.focus != focusTitle {
+				t.Fatalf("Enter en Iniciar: mensaje=%q foco=%v", m.message, m.focus)
+			}
+		})
 	}
 }
 

@@ -146,9 +146,19 @@ func (m *Model) goTo(c navCell) {
 	m.syncInputFocus()
 }
 
+// runningCapacity cuenta las filas de temporizadores que caben sin desplazamiento,
+// con la geometría del layout activo (ancho o estrecho).
+func (m Model) runningCapacity() int {
+	m.runScroll = 0
+	if g, ok := m.wideGeometry(); ok {
+		return len(g.runningRows)
+	}
+	return len(m.computeLayout().running)
+}
+
 // revealRunning ajusta el desplazamiento para que la fila enfocada quede visible.
 func (m *Model) revealRunning() {
-	visible := max(1, len(m.computeLayout().running))
+	visible := max(1, m.runningCapacity())
 	if m.focusedRunning < m.runScroll {
 		m.runScroll = m.focusedRunning
 	}
@@ -160,6 +170,12 @@ func (m *Model) revealRunning() {
 // clampFocus mantiene el foco sobre algo que existe después de refrescar los datos.
 func (m *Model) clampFocus() {
 	m.focusedRunning = min(max(m.focusedRunning, 0), max(0, len(m.running)-1))
+	// Si todo cabe no debe quedar desplazamiento; si no, la ventana no pasa de la última fila.
+	if len(m.running) <= m.runningCapacity() {
+		m.runScroll = 0
+	} else {
+		m.runScroll = min(max(m.runScroll, 0), len(m.running)-1)
+	}
 	visible := len(m.computeLayout().recent)
 	m.focusedRecent = min(max(m.focusedRecent, 0), max(0, visible-1))
 	switch {
@@ -280,6 +296,10 @@ func (m *Model) deleteTask(task tracking.TaskSummary) {
 func (m *Model) restoreLast() {
 	if m.lastDeleted == nil {
 		m.setMessage("No hay nada que deshacer")
+		return
+	}
+	if !m.undoActive() {
+		m.lastDeleted = nil
 		return
 	}
 	task := *m.lastDeleted

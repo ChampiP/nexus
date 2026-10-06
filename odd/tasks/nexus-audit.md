@@ -17,11 +17,11 @@ Non-goals: new features, refactors beyond the fix, changing the activity-based p
 - [x] 2.3 Dismissed/expired/"Abrir Nexus" notification counted as pause done
 
 ## Batch 3 — TUI
-- [ ] 3.1 breakView index panic with long text
-- [ ] 3.2 Wide: wideRunning ignores runScroll → Stop hits the wrong task
-- [ ] 3.3 Wide + screenBreak: clicks in columns 0-1 ignored
-- [ ] 3.4 Edit from Recent: focus stuck and edit buttons unreachable by keyboard
-- [ ] 3.5 Ctrl+Z restores stale deletions and steals text-input undo
+- [x] 3.1 breakView index panic with long text
+- [x] 3.2 Wide: wideRunning ignores runScroll → Stop hits the wrong task
+- [x] 3.3 Wide + screenBreak: clicks in columns 0-1 ignored
+- [x] 3.4 Edit from Recent: focus stuck and edit buttons unreachable by keyboard
+- [x] 3.5 Ctrl+Z restores stale deletions and steals text-input undo
 
 ## Batch 4 — catalog, trash, tasks
 - [ ] 4.1 Deleting a client/org fails with duplicate name (partial unique + ON DELETE SET NULL)

@@ -16,7 +16,7 @@ func (m Model) breakView() string {
 	var card []string
 	if m.brk != nil {
 		lines[l.headingY] = titleStyle.Render("BREAK EN CURSO")
-		card = m.activeCard()
+		card = m.activeCard(max(30, m.width-2) - 2)
 	} else {
 		lines[l.headingY] = titleStyle.Render("EMPEZAR BREAK")
 		card = m.startForm(m.width, l)
@@ -48,8 +48,9 @@ func (m Model) breakView() string {
 	return strings.Join(lines, "\n") + "\n\n" + label.Render(footer)
 }
 
-// activeCard son las líneas de la tarjeta del break en curso.
-func (m Model) activeCard() []string {
+// activeCard son las líneas de la tarjeta del break en curso; width es el ancho útil dentro del recuadro.
+// Etiqueta y reanudación se truncan a una línea para que la altura sea siempre breakCardLines.
+func (m Model) activeCard(width int) []string {
 	b := *m.brk
 	color, status := accent, "Quedan "+formatDuration(b.EndsAt-m.now.Unix())
 	if breakOverdue(b, m.now) {
@@ -59,13 +60,14 @@ func (m Model) activeCard() []string {
 	if len(m.bp.resume) > 0 {
 		resume = "Al volver se reanudan: " + strings.Join(m.bp.resume, ", ")
 	}
+	resume = truncateToWidth(resume, width)
 	breakActive := m.screen == screenBreak || (m.width >= 120 && m.wideColumn == 2)
 	selected := -1
 	if breakActive && !m.bp.onTabs {
 		selected = m.bp.action
 	}
 	return []string{
-		titleStyle.Render("☕ " + b.Label),
+		titleStyle.Render("☕ " + truncateToWidth(b.Label, width-3)),
 		lipgloss.NewStyle().Bold(true).Foreground(color).Render(status),
 		m.breakBar(),
 		fmt.Sprintf("De %s a %s", clockTime(b.StartedAt), clockTime(b.EndsAt)),

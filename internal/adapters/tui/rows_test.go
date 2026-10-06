@@ -3,6 +3,7 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
@@ -230,18 +231,62 @@ func TestConfirmDeletesThenUndoByButtonAndCtrlZ(t *testing.T) {
 	}
 }
 
-func TestUndoButtonExpiresButCtrlZStillWorks(t *testing.T) {
-	db := newRowsStore()
-	m := goTo(t, newRowsModel(db), focusRecent, 0)
-	m = press(t, m, tea.KeyRight, tea.KeyRight, tea.KeyEnter, tea.KeyLeft, tea.KeyEnter)
-	m.undoUntil = m.now.Add(-1)
-	m.refresh()
-	if strings.Contains(m.View(), "[Deshacer]") {
-		t.Fatal("el botón debe desaparecer a los 10 s")
+func TestUndoExpiresAndCtrlZDoesNotRestore(t *testing.T) {
+	for _, width := range []int{100, 130} {
+		t.Run(map[bool]string{true: "wide", false: "narrow"}[width >= 120], func(t *testing.T) {
+			db := newRowsStore()
+			m := newRowsModel(db)
+			m.width = width
+			m.deleteTask(m.recent[0])
+			m.focus = focusRecent
+			m.wideColumn = 1
+			m.now = m.undoUntil.Add(time.Nanosecond)
+			if strings.Contains(m.View(), "[Deshacer]") {
+				t.Fatal("el botón debe desaparecer al vencer la ventana")
+			}
+			updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlZ})
+			m = updated.(Model)
+			if len(db.restored) != 0 || m.lastDeleted != nil {
+				t.Fatalf("Ctrl+Z vencido: restauradas=%v última eliminada=%v", db.restored, m.lastDeleted)
+			}
+		})
 	}
-	m = press(t, m, tea.KeyCtrlZ)
-	if len(db.restored) != 1 {
-		t.Fatal("Ctrl+Z sigue restaurando")
+}
+
+func TestCtrlZDoesNotRestoreWhileTitleInputFocused(t *testing.T) {
+	for _, width := range []int{100, 130} {
+		t.Run(map[bool]string{true: "wide", false: "narrow"}[width >= 120], func(t *testing.T) {
+			db := newRowsStore()
+			m := newRowsModel(db)
+			m.width = width
+			m.deleteTask(m.recent[0])
+			m.focus = focusTitle
+			m.wideColumn = 0
+			m.syncInputFocus()
+			updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlZ})
+			m = updated.(Model)
+			if len(db.restored) != 0 || m.lastDeleted == nil {
+				t.Fatalf("Ctrl+Z en título: restauradas=%v última eliminada=%v", db.restored, m.lastDeleted)
+			}
+		})
+	}
+}
+
+func TestCtrlZRestoresFocusedRowWithinWindow(t *testing.T) {
+	for _, width := range []int{100, 130} {
+		t.Run(map[bool]string{true: "wide", false: "narrow"}[width >= 120], func(t *testing.T) {
+			db := newRowsStore()
+			m := newRowsModel(db)
+			m.width = width
+			m.deleteTask(m.recent[0])
+			m.focus = focusRecent
+			m.wideColumn = 1
+			updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlZ})
+			m = updated.(Model)
+			if len(db.restored) != 1 || m.lastDeleted != nil {
+				t.Fatalf("Ctrl+Z activo: restauradas=%v última eliminada=%v", db.restored, m.lastDeleted)
+			}
+		})
 	}
 }
 

@@ -91,7 +91,7 @@ func (m Model) breakLayout() breakLayout {
 			if m.brk == nil {
 				bodyLines = len(m.startForm(width, l))
 			} else {
-				bodyLines = len(m.activeCard())
+				bodyLines = len(m.activeCard(width - 4))
 			}
 			bodyLines += 1 + len(m.todayLinesWidth(width, l))
 			pausePanelTop := 1 + 1 + bodyLines + 2
