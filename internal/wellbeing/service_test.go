@@ -150,3 +150,28 @@ func TestFifteenSecondsIsAllowed(t *testing.T) {
 		t.Fatalf("15 s debería aceptarse: %v", err)
 	}
 }
+
+func TestApplyResultRecordsOnlyExplicitChoices(t *testing.T) {
+	now := time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC)
+	cases := []struct {
+		result string
+		want   Counters
+	}{
+		{"done", Counters{Done: 1}},
+		{"snooze", Counters{Snoozed: 1}},
+		{"skip", Counters{Skipped: 1}},
+		{"delegated", Counters{}},
+		{"default", Counters{}},
+		{"", Counters{}},
+	}
+	for _, c := range cases {
+		s := NewService(&memory{map[string]string{}}, &workState{active: true}, nil)
+		if err := ApplyResult(s, now, c.result); err != nil {
+			t.Fatalf("%q: %v", c.result, err)
+		}
+		got, _ := s.repo.(*memory).Counters(now.Unix()-1, now.Unix()+1)
+		if got != c.want {
+			t.Fatalf("%q: got %+v want %+v", c.result, got, c.want)
+		}
+	}
+}

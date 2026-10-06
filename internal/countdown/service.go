@@ -2,6 +2,7 @@ package countdown
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -39,6 +40,7 @@ func (s *Service) StartBreak(duration time.Duration, label string, stopIDs []int
 	} else if active != nil {
 		return Break{}, ErrBreakActive
 	}
+	label = strings.TrimSpace(label)
 	if label == "" {
 		label = defaultLabel
 	}
@@ -47,6 +49,7 @@ func (s *Service) StartBreak(duration time.Duration, label string, stopIDs []int
 	}
 	entryID, err := s.timers.StartBreak(label)
 	if err != nil {
+		s.resumeStopped(stopIDs)
 		return Break{}, fmt.Errorf("start break entry: %w", err)
 	}
 	now := s.clock()
@@ -60,9 +63,18 @@ func (s *Service) StartBreak(duration time.Duration, label string, stopIDs []int
 	if err != nil {
 		// Se detiene la entrada para que no quede un break huérfano corriendo.
 		_ = s.timers.Stop(entryID)
+		s.resumeStopped(stopIDs)
 		return Break{}, err
 	}
 	return b, nil
+}
+
+// resumeStopped reanuda las tareas detenidas por un StartBreak fallido, con la misma
+// operación que End(resume). Los errores se ignoran: prevalece el error original.
+func (s *Service) resumeStopped(ids []int64) {
+	for _, id := range ids {
+		_ = s.timers.Resume(id)
+	}
 }
 
 // Active devuelve el break sin terminar, o nil si no hay.

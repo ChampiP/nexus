@@ -89,14 +89,8 @@ func showPauseNow(service *wellbeing.Service) error {
 	if err != nil {
 		return err
 	}
-	switch result {
-	case "snooze":
-		return service.Snooze(now, 10*time.Minute)
-	case "skip":
-		return service.Skip(now)
-	default:
-		return service.Done(now)
-	}
+	return wellbeing.ApplyResult(service, now, result)
+
 }
 
 // runDaemon corre el bucle de avisos hasta recibir SIGINT o SIGTERM; solo permite una instancia.

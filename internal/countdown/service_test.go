@@ -17,6 +17,7 @@ type fakeTimers struct {
 	started  []int64 // ids reanudados con Resume
 	nextID   int64
 	breakErr error
+	labels   []string // etiquetas recibidas por StartBreak
 }
 
 func newFakeTimers(running ...int64) *fakeTimers {
@@ -35,6 +36,7 @@ func (f *fakeTimers) StopMany(ids []int64) error {
 	return nil
 }
 func (f *fakeTimers) StartBreak(label string) (int64, error) {
+	f.labels = append(f.labels, label)
 	if f.breakErr != nil {
 		return 0, f.breakErr
 	}
@@ -121,6 +123,45 @@ func TestStartBreakRollsBackBreakEntryWhenInsertFails(t *testing.T) {
 	}
 	if timers.running[101] {
 		t.Fatal("orphan break entry still running")
+	}
+}
+
+func TestStartBreakResumesStoppedTimersWhenInsertFails(t *testing.T) {
+	now := int64(1000)
+	timers := newFakeTimers(1, 2)
+	s := newTestService(t, timers, &now)
+	s.repo = failingRepo{s.repo}
+	if _, err := s.StartBreak(time.Hour, "", []int64{1, 2}); err == nil {
+		t.Fatal("expected error")
+	}
+	if !reflect.DeepEqual(timers.started, []int64{1, 2}) {
+		t.Fatalf("resumed = %v, want [1 2]", timers.started)
+	}
+}
+
+func TestStartBreakResumesStoppedTimersWhenEntryFails(t *testing.T) {
+	now := int64(1000)
+	timers := newFakeTimers(1)
+	timers.breakErr = errors.New("boom")
+	s := newTestService(t, timers, &now)
+	if _, err := s.StartBreak(time.Hour, "", []int64{1}); err == nil {
+		t.Fatal("expected error")
+	}
+	if !reflect.DeepEqual(timers.started, []int64{1}) {
+		t.Fatalf("resumed = %v, want [1]", timers.started)
+	}
+}
+
+func TestStartBreakWhitespaceLabelUsesDefault(t *testing.T) {
+	now := int64(1000)
+	timers := newFakeTimers()
+	s := newTestService(t, timers, &now)
+	b, err := s.StartBreak(time.Hour, "   ", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Label != "Break" || !reflect.DeepEqual(timers.labels, []string{"Break"}) {
+		t.Fatalf("label = %q, passed = %v", b.Label, timers.labels)
 	}
 }
 

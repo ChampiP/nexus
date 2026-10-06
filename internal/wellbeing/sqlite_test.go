@@ -159,3 +159,54 @@ func TestSQLiteMigrationPersistsSettingsAndCounters(t *testing.T) {
 		t.Fatalf("DND not cleared: %+v %v", st, e)
 	}
 }
+
+func newTestSQLite(t *testing.T) *SQLite {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "t.db")
+	db, err := platformdb.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	if _, _, err := platformdb.Migrate(db, path, Migrations(), time.Now); err != nil {
+		t.Fatal(err)
+	}
+	return NewSQLite(db)
+}
+
+func TestDueFiresAfterInactivityWithRealRepo(t *testing.T) {
+	repo := newTestSQLite(t)
+	w := &workState{active: true}
+	s := NewService(repo, w, nil)
+	now := time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC)
+	_, _ = s.Due(now)
+	w.active = false
+	_, _ = s.Due(now.Add(time.Minute))
+	w.active = true
+	resume := now.Add(10 * time.Minute)
+	_, _ = s.Due(resume)
+	if v, _ := repo.Load(); v["inactive_since"] != "" {
+		t.Fatalf("inactive_since persisted after activity: %q", v["inactive_since"])
+	}
+	// Tras volver a la actividad, un tramo continuo de cfg.Every debe disparar el aviso.
+	if _, ok := s.Due(resume.Add(30 * time.Minute)); !ok {
+		t.Fatal("Due never fires after an inactivity period")
+	}
+}
+
+func TestDeleteRemovesKeyAndPartialSavePreservesOthers(t *testing.T) {
+	repo := newTestSQLite(t)
+	if err := repo.Save(map[string]string{"a": "1", "b": "2"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Save(map[string]string{"a": "3"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Delete("a"); err != nil {
+		t.Fatal(err)
+	}
+	v, _ := repo.Load()
+	if _, ok := v["a"]; ok || v["b"] != "2" {
+		t.Fatalf("unexpected values: %v", v)
+	}
+}

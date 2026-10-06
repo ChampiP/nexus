@@ -12,9 +12,9 @@ Non-goals: new features, refactors beyond the fix, changing the activity-based p
 - [x] 1.4 Numeric project names resolved as ids; only `#id` means id (cli/catalog.go)
 
 ## Batch 2 — pauses and break
-- [ ] 2.1 inactive_since never deleted from SQLite → pauses never fire again (wellbeing)
-- [ ] 2.2 StartBreak failure leaves work timers stopped; whitespace-only label
-- [ ] 2.3 Dismissed/expired/"Abrir Nexus" notification counted as pause done
+- [x] 2.1 inactive_since never deleted from SQLite → pauses never fire again (wellbeing)
+- [x] 2.2 StartBreak failure leaves work timers stopped; whitespace-only label
+- [x] 2.3 Dismissed/expired/"Abrir Nexus" notification counted as pause done
 
 ## Batch 3 — TUI
 - [ ] 3.1 breakView index panic with long text

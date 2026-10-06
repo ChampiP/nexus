@@ -106,6 +106,10 @@ func (s *Service) Due(now time.Time) (Reminder, bool) {
 			start = now
 		}
 		delete(v, "inactive_since")
+		// Save solo hace UPSERT de las claves presentes; la baja se persiste aparte.
+		if err := s.deleteKey("inactive_since"); err != nil {
+			return Reminder{}, false
+		}
 	}
 	if start.IsZero() {
 		start = now
@@ -185,18 +189,44 @@ func (s *Service) saveEvent(values map[string]string, event string, now time.Tim
 	}
 	return s.repo.Save(values)
 }
+
+// ResultRecorder es lo que ApplyResult necesita para registrar la respuesta a una pausa.
+type ResultRecorder interface {
+	Done(time.Time) error
+	Skip(time.Time) error
+	Snooze(time.Time, time.Duration) error
+}
+
+// ApplyResult traduce el resultado de un presentador en un registro. Solo "done", "snooze" y
+// "skip" registran algo; "delegated" (la capa nativa informa por su cuenta), "default"
+// (clic en la notificación), "" (cerrada o expirada) y cualquier otro valor no cuentan.
+func ApplyResult(r ResultRecorder, now time.Time, result string) error {
+	switch result {
+	case "done":
+		return r.Done(now)
+	case "snooze":
+		return r.Snooze(now, 10*time.Minute)
+	case "skip":
+		return r.Skip(now)
+	}
+	return nil
+}
+
 func (s *Service) Snooze(now time.Time, d time.Duration) error {
 	return s.saveEvent(map[string]string{"snoozed_until": strconv.FormatInt(now.Add(d).Unix(), 10)}, "snoozed", now)
 }
 func (s *Service) DND(now time.Time, d time.Duration) error {
 	return s.repo.Save(map[string]string{"dnd_until": strconv.FormatInt(now.Add(d).Unix(), 10)})
 }
-func (s *Service) ClearDND() error {
+func (s *Service) ClearDND() error { return s.deleteKey("dnd_until") }
+
+// deleteKey usa Delete si el repositorio lo ofrece; si no, reemplaza el mapa completo.
+func (s *Service) deleteKey(key string) error {
 	if deleter, ok := s.repo.(interface{ Delete(string) error }); ok {
-		return deleter.Delete("dnd_until")
+		return deleter.Delete(key)
 	}
 	v := s.values()
-	delete(v, "dnd_until")
+	delete(v, key)
 	return s.repo.Save(v)
 }
 func (s *Service) Status(now time.Time) (Status, error) {

@@ -45,19 +45,7 @@ func showWellbeing(ctx context.Context, s Wellbeing, p Presenter, r wellbeing.Re
 		}
 		return
 	}
-	if result == ResultDelegated {
-		return
-	}
-	now := clock()
-	switch result {
-	case ResultSnooze:
-		err = s.Snooze(now, 10*time.Minute)
-	case ResultSkip:
-		err = s.Skip(now)
-	default:
-		err = s.Done(now)
-	}
-	if err != nil {
+	if err = wellbeing.ApplyResult(s, clock(), result); err != nil {
 		slog.Error("no se pudo guardar la respuesta de pausa activa", "error", err)
 	}
 }

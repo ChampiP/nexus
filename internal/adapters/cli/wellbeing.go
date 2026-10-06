@@ -118,14 +118,8 @@ func runWellbeing(args []string, svc Wellbeing, p PresenterBridge, now time.Time
 		if e != nil {
 			return e
 		}
-		switch result {
-		case "snooze":
-			return svc.Snooze(now, 10*time.Minute)
-		case "skip":
-			return svc.Skip(now)
-		default:
-			return svc.Done(now)
-		}
+		return wellbeing.ApplyResult(svc, now, result)
+
 	}
 	if len(args) == 0 {
 		return nil

@@ -180,7 +180,7 @@ func TestWellbeingShowsWhenNotBusy(t *testing.T) {
 	service := &wbFake{due: true, action: make(chan string, 1)}
 	busy := &busyFake{}
 	p := &showFake{results: make(chan string, 1), shown: make(chan wellbeing.Reminder, 1)}
-	p.results <- ""
+	p.results <- "done"
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -266,4 +266,14 @@ func delegated() chan string {
 	c := make(chan string, 1)
 	c <- ResultDelegated
 	return c
+}
+
+func TestShowWellbeingClosedOrClickedRecordsNothing(t *testing.T) {
+	for _, result := range []string{"", "default"} {
+		service := &wbFake{due: true}
+		showWellbeing(context.Background(), service, &showFake{results: func() chan string { c := make(chan string, 1); c <- result; return c }(), shown: make(chan wellbeing.Reminder, 1)}, wellbeing.Reminder{}, time.Now)
+		if _, done, snoozes, skips := service.counts(); done+snoozes+skips != 0 {
+			t.Fatalf("%q recorded done=%d snoozes=%d skips=%d", result, done, snoozes, skips)
+		}
+	}
 }
