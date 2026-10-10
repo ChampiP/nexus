@@ -203,6 +203,23 @@ func TestShutdownStopperAdaptsTracking(t *testing.T) {
 	}
 }
 
+func TestShutdownStopperKeepsPartialEntriesOnError(t *testing.T) {
+	db, path := legacyDB(t)
+	upgrade(t, db, path)
+	repo := tracking.NewSQLite(db)
+	if _, err := repo.Insert(tracking.Entry{Title: "later", Kind: tracking.KindWork, StartedAt: 500}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER fail_later_stop BEFORE UPDATE OF ended_at ON entries WHEN OLD.title='later' BEGIN SELECT RAISE(FAIL, 'stop failed'); END`); err != nil {
+		t.Fatal(err)
+	}
+	stopper := shutdownStopper{tracker: tracking.NewTracker(repo, nil)}
+	entries, err := stopper.StopRunningAt(time.Unix(600, 0))
+	if err == nil || len(entries) != 1 || entries[0].Title != "running" {
+		t.Fatalf("partial stopped = %v, err=%v", entries, err)
+	}
+}
+
 func TestPurgingEntryNullsCountdownReference(t *testing.T) {
 	db, path := legacyDB(t)
 	upgrade(t, db, path)

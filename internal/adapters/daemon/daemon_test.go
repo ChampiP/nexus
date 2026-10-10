@@ -327,6 +327,9 @@ func TestShutdownGuard(t *testing.T) {
 				if n.Title != "Nexus: cronómetro detenido" || len(n.Actions) != 1 || n.Actions[0].ID != "default" {
 					t.Fatalf("notice = %+v", n)
 				}
+				if tc.name == "several" && n.Body != "Se detuvieron 2 cronómetros a las "+last.Format("15:04")+" porque la PC se apagó o se suspendió. Puedes reanudarlos desde Nexus." {
+					t.Fatalf("body = %q", n.Body)
+				}
 				if tc.name == "gap" && n.Body != "Se detuvo «Trabajo» a las "+last.Format("15:04")+" porque la PC se apagó o se suspendió. Puedes reanudarlo desde Nexus." {
 					t.Fatalf("body = %q", n.Body)
 				}
@@ -350,6 +353,29 @@ func TestShutdownGuard(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestShutdownGuardNotifiesPartialRecoveryAndRetries(t *testing.T) {
+	last := t0.Add(-3 * time.Minute)
+	beat := &fakeHeartbeat{last: last, present: true}
+	stopper := &fakeStopper{entries: []StoppedEntry{{Title: "Trabajo"}}, err: errors.New("stop failed")}
+	guard := shutdownGuard{stopper: stopper, heartbeat: beat}
+	notices := 0
+	guard.check(t0, func(n notify.Notification) {
+		notices++
+		want := "Se detuvo «Trabajo» a las " + last.Format("15:04") + " porque la PC se apagó o se suspendió. Puedes reanudarlo desde Nexus."
+		if n.Body != want {
+			t.Fatalf("body = %q", n.Body)
+		}
+	})
+	if notices != 1 || beat.beats != 0 || len(stopper.calls) != 1 {
+		t.Fatalf("notices=%d beats=%d stops=%v", notices, beat.beats, stopper.calls)
+	}
+	stopper.entries = nil
+	guard.check(t0.Add(time.Second), func(notify.Notification) { t.Fatal("duplicate notice") })
+	if len(stopper.calls) != 2 || !stopper.calls[1].Equal(last) || beat.beats != 0 {
+		t.Fatalf("retry stops=%v beats=%d", stopper.calls, beat.beats)
 	}
 }
 

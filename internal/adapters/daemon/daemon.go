@@ -60,22 +60,24 @@ func (g *shutdownGuard) check(now time.Time, send func(notify.Notification)) {
 	}
 	if present && now.Sub(last) > shutdownGap {
 		entries, err := g.stopper.StopRunningAt(last)
-		if err != nil {
-			slog.Error("no se pudieron detener los cronómetros", "error", err)
-			return
-		}
 		if len(entries) > 0 {
 			subject := fmt.Sprintf("%d cronómetros", len(entries))
 			verb := "Se detuvieron"
+			resume := "reanudarlos"
 			if len(entries) == 1 {
 				subject = "«" + entries[0].Title + "»"
 				verb = "Se detuvo"
+				resume = "reanudarlo"
 			}
 			send(notify.Notification{
 				Title:   "Nexus: cronómetro detenido",
-				Body:    fmt.Sprintf("%s %s a las %s porque la PC se apagó o se suspendió. Puedes reanudarlo desde Nexus.", verb, subject, last.Format("15:04")),
+				Body:    fmt.Sprintf("%s %s a las %s porque la PC se apagó o se suspendió. Puedes %s desde Nexus.", verb, subject, last.Format("15:04"), resume),
 				Actions: []notify.Action{{ID: "default", Label: "Abrir Nexus"}},
 			})
+		}
+		if err != nil {
+			slog.Error("no se pudieron detener los cronómetros", "error", err)
+			return
 		}
 	}
 	if !present || now.Sub(last) >= heartbeatEvery {

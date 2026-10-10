@@ -111,14 +111,11 @@ type shutdownStopper struct{ tracker *tracking.Tracker }
 
 func (s shutdownStopper) StopRunningAt(at time.Time) ([]daemon.StoppedEntry, error) {
 	entries, err := s.tracker.StopRunningAt(at)
-	if err != nil {
-		return nil, err
-	}
 	stopped := make([]daemon.StoppedEntry, len(entries))
 	for i, entry := range entries {
 		stopped[i] = daemon.StoppedEntry{Title: entry.Title}
 	}
-	return stopped, nil
+	return stopped, err
 }
 
 // openNexus abre (o enfoca) el TUI de Nexus en una terminal, donde el usuario resuelve el break.
