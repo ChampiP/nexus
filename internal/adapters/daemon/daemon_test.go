@@ -268,6 +268,180 @@ func TestCancelStopsAndCancelsPending(t *testing.T) {
 	}
 }
 
+type fakeHeartbeat struct {
+	last             time.Time
+	present          bool
+	beats            int
+	readErr, beatErr error
+}
+
+func (f *fakeHeartbeat) Last() (time.Time, bool, error) { return f.last, f.present, f.readErr }
+func (f *fakeHeartbeat) Beat(at time.Time) error {
+	f.beats++
+	if f.beatErr != nil {
+		return f.beatErr
+	}
+	f.last, f.present = at, true
+	return nil
+}
+
+type fakeStopper struct {
+	calls   []time.Time
+	entries []StoppedEntry
+	err     error
+}
+
+func (f *fakeStopper) StopRunningAt(at time.Time) ([]StoppedEntry, error) {
+	f.calls = append(f.calls, at)
+	return f.entries, f.err
+}
+
+func TestShutdownGuard(t *testing.T) {
+	for _, tc := range []struct {
+		name                              string
+		age                               time.Duration
+		missing                           bool
+		entries                           []StoppedEntry
+		stopErr, readErr                  error
+		wantStops, wantBeats, wantNotices int
+	}{
+		{name: "gap", age: 3 * time.Minute, entries: []StoppedEntry{{Title: "Trabajo"}}, wantStops: 1, wantBeats: 1, wantNotices: 1},
+		{name: "short gap", age: time.Minute, wantBeats: 1},
+		{name: "boundary", age: 2 * time.Minute, wantBeats: 1},
+		{name: "recent beat", age: 10 * time.Second},
+		{name: "beat boundary", age: 30 * time.Second, wantBeats: 1},
+		{name: "missing", missing: true, wantBeats: 1},
+		{name: "stop failure", age: 3 * time.Minute, stopErr: errors.New("stop failed"), wantStops: 1},
+		{name: "nothing running", age: 3 * time.Minute, wantStops: 1, wantBeats: 1},
+		{name: "read failure", readErr: errors.New("read failed")},
+		{name: "several", age: 3 * time.Minute, entries: []StoppedEntry{{Title: "Uno"}, {Title: "Dos"}}, wantStops: 1, wantBeats: 1, wantNotices: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			last := t0.Add(-tc.age)
+			beat := &fakeHeartbeat{last: last, present: !tc.missing, readErr: tc.readErr}
+			stopper := &fakeStopper{entries: tc.entries, err: tc.stopErr}
+			guard := shutdownGuard{stopper: stopper, heartbeat: beat}
+			notices := 0
+			guard.check(t0, func(n notify.Notification) {
+				notices++
+				if n.Title != "Nexus: cronómetro detenido" || len(n.Actions) != 1 || n.Actions[0].ID != "default" {
+					t.Fatalf("notice = %+v", n)
+				}
+				if tc.name == "gap" && n.Body != "Se detuvo «Trabajo» a las "+last.Format("15:04")+" porque la PC se apagó o se suspendió. Puedes reanudarlo desde Nexus." {
+					t.Fatalf("body = %q", n.Body)
+				}
+			})
+			if len(stopper.calls) != tc.wantStops || beat.beats != tc.wantBeats || notices != tc.wantNotices {
+				t.Fatalf("stops=%v beats=%d notices=%d", stopper.calls, beat.beats, notices)
+			}
+			if len(stopper.calls) > 0 && !stopper.calls[0].Equal(last) {
+				t.Fatalf("stopped at %v, want %v", stopper.calls[0], last)
+			}
+			if tc.stopErr != nil {
+				guard.check(t0, func(notify.Notification) { t.Fatal("unexpected notice") })
+				if len(stopper.calls) != 2 || beat.beats != 0 {
+					t.Fatal("must retry without beating")
+				}
+			}
+			if tc.name == "gap" {
+				guard.check(t0, func(notify.Notification) { t.Fatal("duplicate notice") })
+				if beat.beats != 1 || len(stopper.calls) != 1 {
+					t.Fatal("duplicate recovery")
+				}
+			}
+		})
+	}
+}
+
+func TestShutdownGuardRetriesHeartbeatWrite(t *testing.T) {
+	beat := &fakeHeartbeat{beatErr: errors.New("write failed")}
+	guard := shutdownGuard{stopper: &fakeStopper{}, heartbeat: beat}
+	guard.check(t0, func(notify.Notification) { t.Fatal("unexpected notice") })
+	if beat.beats != 1 || beat.present {
+		t.Fatal("failed write must not advance heartbeat")
+	}
+	beat.beatErr = nil
+	guard.check(t0, func(notify.Notification) { t.Fatal("unexpected notice") })
+	if beat.beats != 2 || !beat.last.Equal(t0) {
+		t.Fatal("write must retry")
+	}
+}
+
+func TestShutdownGuardDetectsGapOnTickAndCancelsNotice(t *testing.T) {
+	b := &fakeBreaks{b: countdown.Break{EndsAt: t0.Add(24 * time.Hour).Unix()}}
+	n := newNotifier(b)
+	beat := &fakeHeartbeat{}
+	stopper := &fakeStopper{entries: []StoppedEntry{{Title: "Trabajo"}}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	calls := 0
+	go func() {
+		defer close(done)
+		RunWithWellbeing(ctx, b, n, func() error { t.Error("opened after cancellation"); return nil }, nil, nil, nil, func() time.Time {
+			calls++
+			if calls <= 2 {
+				return t0
+			}
+			return t0.Add(time.Hour)
+		}, time.Millisecond, WithShutdownGuard(stopper, beat))
+	}()
+	defer cancel()
+	select {
+	case <-n.sent:
+	case <-time.After(time.Second):
+		cancel()
+		<-done
+		t.Fatal("no notice on tick")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("pending notice prevented shutdown")
+	}
+	if len(stopper.calls) != 1 || !stopper.calls[0].Equal(t0) || beat.beats != 2 {
+		t.Fatalf("stops=%v beats=%d", stopper.calls, beat.beats)
+	}
+}
+
+func TestShutdownNotificationDoesNotBlockAndOpens(t *testing.T) {
+	b := &fakeBreaks{b: countdown.Break{EndsAt: t0.Add(time.Hour).Unix()}}
+	n := newNotifier(b)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	opened := make(chan struct{}, 1)
+	clocks := make(chan struct{}, 100)
+	go func() {
+		defer close(done)
+		RunWithWellbeing(ctx, b, n, func() error { opened <- struct{}{}; return nil }, nil, nil, nil, func() time.Time {
+			select {
+			case clocks <- struct{}{}:
+			default:
+			}
+			return t0
+		}, time.Millisecond, WithShutdownGuard(&fakeStopper{entries: []StoppedEntry{{Title: "Trabajo"}}}, &fakeHeartbeat{last: t0.Add(-time.Hour), present: true}))
+	}()
+	defer func() { cancel(); <-done }()
+	select {
+	case <-n.sent:
+	case <-time.After(time.Second):
+		t.Fatal("no notice")
+	}
+	for i := 0; i < 5; i++ {
+		select {
+		case <-clocks:
+		case <-time.After(time.Second):
+			t.Fatal("blocked loop")
+		}
+	}
+	n.reply <- "default"
+	select {
+	case <-opened:
+	case <-time.After(time.Second):
+		t.Fatal("did not open")
+	}
+}
+
 func TestLockPathFallbackIsUserSpecific(t *testing.T) {
 	t.Setenv("XDG_RUNTIME_DIR", "")
 	want := filepath.Join(os.TempDir(), "nexus-daemon-"+strconv.Itoa(os.Getuid())+".lock")

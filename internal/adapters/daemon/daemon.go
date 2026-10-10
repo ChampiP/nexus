@@ -17,6 +17,92 @@ import (
 // extendBy es lo que suma la acción "+10 min".
 const extendBy = 10 * time.Minute
 
+const (
+	heartbeatEvery = 30 * time.Second
+	shutdownGap    = 2 * time.Minute
+)
+
+// StoppedEntry contiene solo el dato necesario para explicar la detención.
+type StoppedEntry struct{ Title string }
+
+// Stopper detiene las sesiones de trabajo en el último latido.
+type Stopper interface {
+	StopRunningAt(time.Time) ([]StoppedEntry, error)
+}
+
+// Heartbeat conserva el último instante en que el daemon estuvo activo.
+type Heartbeat interface {
+	Last() (time.Time, bool, error)
+	Beat(time.Time) error
+}
+
+// Option agrega dependencias opcionales sin cambiar los llamadores existentes.
+type Option func(*shutdownGuard)
+
+// WithShutdownGuard habilita la recuperación tras apagados o suspensiones.
+func WithShutdownGuard(stopper Stopper, heartbeat Heartbeat) Option {
+	return func(g *shutdownGuard) { g.stopper, g.heartbeat = stopper, heartbeat }
+}
+
+type shutdownGuard struct {
+	stopper   Stopper
+	heartbeat Heartbeat
+}
+
+func (g *shutdownGuard) check(now time.Time, send func(notify.Notification)) {
+	if g.stopper == nil || g.heartbeat == nil {
+		return
+	}
+	last, present, err := g.heartbeat.Last()
+	if err != nil {
+		slog.Error("no se pudo leer el latido", "error", err)
+		return
+	}
+	if present && now.Sub(last) > shutdownGap {
+		entries, err := g.stopper.StopRunningAt(last)
+		if err != nil {
+			slog.Error("no se pudieron detener los cronómetros", "error", err)
+			return
+		}
+		if len(entries) > 0 {
+			subject := fmt.Sprintf("%d cronómetros", len(entries))
+			verb := "Se detuvieron"
+			if len(entries) == 1 {
+				subject = "«" + entries[0].Title + "»"
+				verb = "Se detuvo"
+			}
+			send(notify.Notification{
+				Title:   "Nexus: cronómetro detenido",
+				Body:    fmt.Sprintf("%s %s a las %s porque la PC se apagó o se suspendió. Puedes reanudarlo desde Nexus.", verb, subject, last.Format("15:04")),
+				Actions: []notify.Action{{ID: "default", Label: "Abrir Nexus"}},
+			})
+		}
+	}
+	if !present || now.Sub(last) >= heartbeatEvery {
+		if err := g.heartbeat.Beat(now); err != nil {
+			slog.Error("no se pudo escribir el latido", "error", err)
+		}
+	}
+}
+
+func shutdownReply(ctx context.Context, notifier Notifier, open Opener, n notify.Notification) {
+	sendCtx, cancel := context.WithTimeout(ctx, 30*time.Minute)
+	defer cancel()
+	id, err := notifier.Send(sendCtx, n)
+	if err != nil {
+		if sendCtx.Err() == nil {
+			slog.Error("no se pudo enviar el aviso de detención", "error", err)
+		}
+		return
+	}
+	if sendCtx.Err() != nil || id != "default" {
+		return
+	}
+	if err := open(); err != nil {
+		slog.Error("no se pudo abrir Nexus", "error", err)
+	}
+}
+
 // Breaks es lo que el daemon necesita de countdown.Service.
 type Breaks interface {
 	DueNotification(now time.Time) (*countdown.Break, bool)
@@ -40,7 +126,11 @@ func Run(ctx context.Context, breaks Breaks, notifier Notifier, open Opener, clo
 }
 
 // RunWithWellbeing revisa breaks y pausas activas en el mismo tick.
-func RunWithWellbeing(ctx context.Context, breaks Breaks, notifier Notifier, open Opener, service Wellbeing, presenter Presenter, busy BusyChecker, clock func() time.Time, tick time.Duration) {
+func RunWithWellbeing(ctx context.Context, breaks Breaks, notifier Notifier, open Opener, service Wellbeing, presenter Presenter, busy BusyChecker, clock func() time.Time, tick time.Duration, options ...Option) {
+	guard := &shutdownGuard{}
+	for _, option := range options {
+		option(guard)
+	}
 	ticker := time.NewTicker(tick)
 	defer ticker.Stop()
 
@@ -54,6 +144,13 @@ func RunWithWellbeing(ctx context.Context, breaks Breaks, notifier Notifier, ope
 	wellbeingFinished := make(chan struct{}, 1)
 	var workers sync.WaitGroup
 	check := func() {
+		guard.check(clock(), func(n notify.Notification) {
+			workers.Add(1)
+			go func() {
+				defer workers.Done()
+				shutdownReply(sendCtx, notifier, open, n)
+			}()
+		})
 		if !wellbeingPending && service != nil && presenter != nil && busy != nil {
 			r, ok := service.Due(clock())
 			if ok {

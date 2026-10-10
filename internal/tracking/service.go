@@ -349,6 +349,34 @@ func (t *Tracker) Stop(id int64) error {
 	return nil
 }
 
+// StopRunningAt detiene en at las sesiones de trabajo en curso que empezaron antes de at
+// (por ejemplo, la PC se apagó). Devuelve las sesiones detenidas, ya con EndedAt.
+func (t *Tracker) StopRunningAt(at time.Time) ([]Entry, error) {
+	running, err := t.repository.Running()
+	if err != nil {
+		return nil, fmt.Errorf("list running timers: %w", err)
+	}
+	stopped := make([]Entry, 0)
+	endedAt := at.Unix()
+	for _, entry := range running {
+		if entry.Kind != KindWork || entry.StartedAt >= endedAt {
+			continue
+		}
+		if err := t.repository.Stop(entry.ID, endedAt); err != nil {
+			if errors.Is(err, ErrNotRunning) {
+				continue
+			}
+			return stopped, fmt.Errorf("stop timer #%d: %w", entry.ID, err)
+		}
+		stored, err := t.repository.Get(entry.ID)
+		if err != nil {
+			return stopped, fmt.Errorf("get entry #%d: %w", entry.ID, err)
+		}
+		stopped = append(stopped, stored)
+	}
+	return stopped, nil
+}
+
 // StopLatest ends the most recently started running timer.
 func (t *Tracker) StopLatest() error {
 	running, err := t.repository.Running()

@@ -92,14 +92,20 @@ func (s *Service) Due(now time.Time) (Reminder, bool) {
 	if err != nil {
 		return Reminder{}, false
 	}
+	observedAt := parseTime(v["observed_at"])
+	v["observed_at"] = strconv.FormatInt(now.Unix(), 10)
 	if !active {
 		if parseTime(v["inactive_since"]).IsZero() {
 			v["inactive_since"] = strconv.FormatInt(now.Unix(), 10)
-			_ = s.repo.Save(v)
 		}
+		_ = s.repo.Save(v)
 		return Reminder{}, false
 	}
 	start := parseTime(v["active_since"])
+	// Un intervalo sin observaciones también interrumpe la continuidad, por ejemplo al apagar.
+	if !observedAt.IsZero() && now.Sub(observedAt) >= inactiveReset {
+		start = now
+	}
 	inactiveSince := parseTime(v["inactive_since"])
 	if !inactiveSince.IsZero() {
 		if now.Sub(inactiveSince) >= inactiveReset || start.IsZero() {
@@ -242,7 +248,13 @@ func (s *Service) Status(now time.Time) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	start := parseTime(v["active_since"])
+	activeStart := parseTime(v["active_since"])
+	observedAt := parseTime(v["observed_at"])
+	// Status no persiste cambios, pero evita mostrar un tramo anterior al apagado.
+	if active && !observedAt.IsZero() && now.Sub(observedAt) >= inactiveReset {
+		activeStart = now
+	}
+	start := activeStart
 	last := parseTime(v["last_shown_at"])
 	if last.After(start) {
 		start = last
@@ -252,8 +264,8 @@ func (s *Service) Status(now time.Time) (Status, error) {
 		next = now.Add(cfg.Every)
 	}
 	activeFor := time.Duration(0)
-	if active && !parseTime(v["active_since"]).IsZero() {
-		activeFor = now.Sub(parseTime(v["active_since"]))
+	if active && !activeStart.IsZero() {
+		activeFor = now.Sub(activeStart)
 		if activeFor < 0 {
 			activeFor = 0
 		}

@@ -185,6 +185,24 @@ func TestOrderedMigrationsAreIdempotentAndCreateIntegrityRules(t *testing.T) {
 	}
 }
 
+func TestShutdownStopperAdaptsTracking(t *testing.T) {
+	db, path := legacyDB(t)
+	upgrade(t, db, path)
+	tracker := tracking.NewTracker(tracking.NewSQLite(db), nil)
+	stopper := shutdownStopper{tracker: tracker}
+	entries, err := stopper.StopRunningAt(time.Unix(600, 0))
+	if err != nil || len(entries) != 1 || entries[0].Title != "running" {
+		t.Fatalf("stopped = %v, err=%v", entries, err)
+	}
+	if got := count(t, db, "SELECT COUNT(*) FROM entries WHERE title='running' AND ended_at=600"); got != 1 {
+		t.Fatal("session did not end at heartbeat")
+	}
+	entries, err = stopper.StopRunningAt(time.Unix(600, 0))
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("repeat = %v, err=%v", entries, err)
+	}
+}
+
 func TestPurgingEntryNullsCountdownReference(t *testing.T) {
 	db, path := legacyDB(t)
 	upgrade(t, db, path)

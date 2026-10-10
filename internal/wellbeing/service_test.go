@@ -60,7 +60,11 @@ func TestDefaultsValidationDueAndCounters(t *testing.T) {
 	if _, ok := s.Due(now); ok {
 		t.Fatal("early due")
 	}
-	now = now.Add(30 * time.Minute)
+	for range 29 {
+		now = now.Add(time.Minute)
+		_, _ = s.Due(now)
+	}
+	now = now.Add(time.Minute)
 	r, ok := s.Due(now)
 	if !ok || r.Duration != 30*time.Second || r.Tip == "" {
 		t.Fatalf("due=%+v %v", r, ok)
@@ -86,9 +90,85 @@ func TestDueUsesActiveComputerWithNoRunningTimers(t *testing.T) {
 	w := &workState{active: true}
 	s := NewService(repo, w, nil)
 	_, _ = s.Due(now)
-	now = now.Add(30 * time.Minute)
+	for range 29 {
+		now = now.Add(time.Minute)
+		_, _ = s.Due(now)
+	}
+	now = now.Add(time.Minute)
 	if _, ok := s.Due(now); !ok {
 		t.Fatal("active computer should become due regardless of running timers")
+	}
+}
+
+func TestObservationGapContinuity(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		gap     time.Duration
+		missing bool
+		reset   bool
+	}{
+		{"shutdown", 8 * time.Hour, false, true},
+		{"reset boundary", inactiveReset, false, true},
+		{"short gap", time.Minute, false, false},
+		{"existing install", 8 * time.Hour, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start := time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC)
+			repo := &memory{map[string]string{}}
+			s := NewService(repo, &workState{active: true}, nil)
+			_, _ = s.Due(start)
+			if tc.missing {
+				delete(repo.values, "observed_at")
+			}
+			resume := start.Add(tc.gap)
+			_, due := s.Due(resume)
+			wantStart := start
+			if tc.reset {
+				wantStart = resume
+			}
+			if due != (resume.Sub(wantStart) >= DefaultSettings().Every) {
+				t.Fatalf("due after gap=%v", due)
+			}
+			if got := parseTime(repo.values["active_since"]); !got.Equal(wantStart) {
+				t.Fatalf("start=%v want %v", got, wantStart)
+			}
+			if got := parseTime(repo.values["observed_at"]); !got.Equal(resume) {
+				t.Fatalf("observation=%v want %v", got, resume)
+			}
+			if tc.reset {
+				for elapsed := time.Minute; elapsed <= DefaultSettings().Every; elapsed += time.Minute {
+					_, due = s.Due(resume.Add(elapsed))
+					if due != (elapsed == DefaultSettings().Every) {
+						t.Fatalf("elapsed=%v due=%v", elapsed, due)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestStatusAfterObservationGap(t *testing.T) {
+	start := time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC)
+	s := NewService(&memory{map[string]string{}}, &workState{active: true}, nil)
+	_, _ = s.Due(start)
+	now := start.Add(8 * time.Hour)
+	status, err := s.Status(now)
+	if err != nil || status.ActiveFor != 0 || !status.NextDue.Equal(now.Add(DefaultSettings().Every)) {
+		t.Fatalf("status=%+v err=%v", status, err)
+	}
+}
+
+func TestInactiveObservationsArePersisted(t *testing.T) {
+	now := time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC)
+	repo := &memory{map[string]string{}}
+	s := NewService(repo, &workState{}, nil)
+	_, _ = s.Due(now)
+	_, _ = s.Due(now.Add(time.Minute))
+	if got := parseTime(repo.values["observed_at"]); !got.Equal(now.Add(time.Minute)) {
+		t.Fatalf("observation=%v", got)
+	}
+	if got := parseTime(repo.values["inactive_since"]); !got.Equal(now) {
+		t.Fatalf("inactivity start=%v", got)
 	}
 }
 

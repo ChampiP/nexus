@@ -53,7 +53,7 @@ func run(args []string) error {
 	}
 	defer closeDB()
 	if len(args) == 1 && args[0] == "daemon" {
-		return runDaemon(breaks, activePauses)
+		return runDaemon(tracker, path, breaks, activePauses)
 	}
 	if len(args) == 0 {
 		return tui.Run(tracker, catalogService, breaks, tui.WithWellbeing(activePauses), tui.WithTryPause(func() {
@@ -94,7 +94,7 @@ func showPauseNow(service *wellbeing.Service) error {
 }
 
 // runDaemon corre el bucle de avisos hasta recibir SIGINT o SIGTERM; solo permite una instancia.
-func runDaemon(breaks *countdown.Service, activePauses *wellbeing.Service) error {
+func runDaemon(tracker *tracking.Tracker, databasePath string, breaks *countdown.Service, activePauses *wellbeing.Service) error {
 	release, err := daemon.Lock(daemon.LockPath())
 	if err != nil {
 		return err
@@ -102,8 +102,23 @@ func runDaemon(breaks *countdown.Service, activePauses *wellbeing.Service) error
 	defer release()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	daemon.RunWithWellbeing(ctx, breaks, notifier{}, openNexus, activePauses, wellbeingPresenter{}, presence.New(nil), time.Now, daemonTick)
+	daemon.RunWithWellbeing(ctx, breaks, notifier{}, openNexus, activePauses, wellbeingPresenter{}, presence.New(nil), time.Now, daemonTick, daemon.WithShutdownGuard(shutdownStopper{tracker}, daemon.NewHeartbeat(databasePath+".alive")))
 	return nil
+}
+
+// shutdownStopper adapta tracking sin acoplar el daemon al módulo.
+type shutdownStopper struct{ tracker *tracking.Tracker }
+
+func (s shutdownStopper) StopRunningAt(at time.Time) ([]daemon.StoppedEntry, error) {
+	entries, err := s.tracker.StopRunningAt(at)
+	if err != nil {
+		return nil, err
+	}
+	stopped := make([]daemon.StoppedEntry, len(entries))
+	for i, entry := range entries {
+		stopped[i] = daemon.StoppedEntry{Title: entry.Title}
+	}
+	return stopped, nil
 }
 
 // openNexus abre (o enfoca) el TUI de Nexus en una terminal, donde el usuario resuelve el break.

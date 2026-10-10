@@ -188,9 +188,12 @@ func TestDueFiresAfterInactivityWithRealRepo(t *testing.T) {
 	if v, _ := repo.Load(); v["inactive_since"] != "" {
 		t.Fatalf("inactive_since persisted after activity: %q", v["inactive_since"])
 	}
-	// Tras volver a la actividad, un tramo continuo de cfg.Every debe disparar el aviso.
-	if _, ok := s.Due(resume.Add(30 * time.Minute)); !ok {
-		t.Fatal("Due never fires after an inactivity period")
+	// Tras volver a la actividad, las observaciones mantienen un tramo continuo de cfg.Every.
+	for elapsed := time.Minute; elapsed <= DefaultSettings().Every; elapsed += time.Minute {
+		_, due := s.Due(resume.Add(elapsed))
+		if due != (elapsed == DefaultSettings().Every) {
+			t.Fatalf("elapsed=%v due=%v", elapsed, due)
+		}
 	}
 }
 
