@@ -12,5 +12,5 @@ Non-goals: idle/lock auto-stop, asking on resume, changing breaks.
 - [x] 1 tracking: `StopRunningAt(at)` stops running work sessions started before `at`, ending at `at` (+ tests)
 - [x] 2 daemon: file heartbeat, gap detection on startup and every tick, notification, wiring in cmd/nexus (+ tests)
 - [x] 3 wellbeing: active pause reminder fires right after boot because active_since survives the shutdown; store the last observation time and reset the active streak when the gap is >= inactiveReset (+ tests)
-- [ ] 3b verify isolated (HOME and NEXUS_DB temporary, copy of the real DB)
-- [ ] 4 commit, install, restart nexus.service; back up the DB and fix #13 and #16 to the shutdown times
+- [x] 3b verify isolated (PASS; live wellbeing path not exercisable without omarchy-shell in isolation, unit tests cover it)
+- [x] 4 commit 06ca5ff, installed, nexus.service restarted; backup nexus.db.manual-20261010-125202; #13 ended 12:28:48 (1.17 h), #16 ended 00:17:53 (1.37 h)
